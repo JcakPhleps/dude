@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleName</key>
+	<string>Dude</string>
+	<key>CFBundleDisplayName</key>
+	<string>Dude</string>
+	<key>CFBundleIdentifier</key>
+	<string>com.jackphelps.dude</string>
+	<key>CFBundleShortVersionString</key>
+	<string>$(MARKETING_VERSION)</string>
+	<key>CFBundleVersion</key>
+	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>$(MACOSX_DEPLOYMENT_TARGET)</string>
+	<key>LSUIElement</key>
+	<true/>
+	<key>NSHumanReadableCopyright</key>
+	<string>dude — your desktop buddy</string>
+	<key>NSCalendarsFullAccessUsageDescription</key>
+	<string>Dude reads your calendar so it can answer questions about your schedule.</string>
+	<key>NSRemindersFullAccessUsageDescription</key>
+	<string>Dude reads your reminders so it can answer questions about your to-dos.</string>
+	<key>NSAppleEventsUsageDescription</key>
+	<string>Dude sends messages and email and controls Spotify on your behalf when you ask.</string>
+	<key>NSContactsUsageDescription</key>
+	<string>Dude looks up contacts so it can text the person you name.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Dude listens to your voice so you can talk to him instead of typing.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Dude turns your speech into text so it can understand what you say.</string>
+</dict>
+</plist>

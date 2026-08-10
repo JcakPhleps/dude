@@ -1,0 +1,13 @@
+# Xcode / build
+Dude.xcodeproj/
+build/
+DerivedData/
+*.xcuserstate
+xcuserdata/
+
+# macOS
+.DS_Store
+
+# Local secrets — never commit
+.dude/
+config.json
