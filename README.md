@@ -1,22 +1,36 @@
+<div align="center">
+
+<img src="docs/icon.png" width="120" alt="dude app icon">
+
 # dude
 
-A screen-aware desktop buddy for macOS. **dude** lives on your desktop as a
-pixel-art stick-figure — he can see what's on your screen, answer questions in
-context, actually *do* things for you, and when he works with an app he'll stroll
-over to its Dock icon and pull out his laptop.
+**A screen-aware desktop buddy for macOS — a little pixel guy who sees your
+screen, answers in context, and actually *does* things.**
+
+[![Download for macOS](https://img.shields.io/github/v/release/magwann/dude?label=Download%20for%20macOS&logo=apple&color=2ea44f)](https://github.com/magwann/dude/releases/latest)
+&nbsp;
+![Platform](https://img.shields.io/badge/macOS-14%2B-lightgrey?logo=apple)
+
+### [⬇︎ Download the latest release](https://github.com/magwann/dude/releases/latest)
+
+</div>
+
+**dude** lives on your desktop as a pixel-art stick-figure — he can see what's on
+your screen, answer questions in context, actually *do* things for you, and when
+he works with an app he'll stroll over to its Dock icon and pull out his laptop.
 
 Think LittleBird — but with a little guy who actually walks around your desktop.
 
-<!-- Drop a screenshot or GIF here once you have one:
-![dude on the desktop](docs/dude.png) -->
+<!-- Demo GIF goes here once captured: ![dude in action](docs/demo.gif) -->
 
 ## What he can do
 
 - **Floats on your desktop** — an always-on-top, draggable pixel mascot with a
   bunch of moods: idle bob + blink, thinking, talking, listening, dancing, and
   more.
-- **Ask him anything** — click him, use the 🙂 menu-bar item, or hit the global
-  hotkey **⌃⌥D**. There's a **voice mode** too (⌃⌥D opens straight into it).
+- **Ask him anything** — click him, use the menu-bar item (his face, top-right),
+  or hit the global hotkey **⌃⌥D**. There's a **voice mode** too (⌃⌥D opens
+  straight into it).
 - **He sees your screen** — captures the display via ScreenCaptureKit and reasons
   about it with Google's Gemini vision model.
 - **He knows your stuff, on demand** — when a question is actually about it, he
@@ -33,21 +47,25 @@ Think LittleBird — but with a little guy who actually walks around your deskto
   `~/Library/Application Support/Dude/`. Nothing leaves your machine except the
   screenshot + question sent to the API when *you* ask.
 
-## Install (for regular use)
+## Install
 
-dude is distributed as a **self-signed** app (no paid Apple Developer account),
-so macOS will ask you to confirm it the first time — this is expected.
+dude is **self-signed** (no paid Apple Developer account yet), so macOS Gatekeeper
+will block it the first time. This is expected — here's the one-time dance:
 
-1. Download the latest `Dude.zip` from the [**Releases**](../../releases) page and
-   unzip it.
-2. **Drag `Dude.app` into your Applications folder** *before* opening it (this
-   avoids a macOS quirk that can make permissions act up).
-3. Double-click it. macOS will say it "can't verify" the app — open
-   **System Settings ▸ Privacy & Security**, scroll down, and click **Open
-   Anyway**, then confirm.
-4. Grant the permissions he asks for as you use features (see below).
+1. Download **`Dude.dmg`** from the [**latest release**](https://github.com/magwann/dude/releases/latest)
+   and open it.
+2. **Drag `dude` into Applications** (do this *before* first launch — it avoids a
+   macOS quirk that can make permissions act up).
+3. Open it. If macOS says dude is **"damaged" or "can't be opened"**, clear the
+   quarantine flag in Terminal, then launch it normally:
+   ```sh
+   xattr -dr com.apple.quarantine /Applications/dude.app
+   ```
+   (On some setups a plain **right-click ▸ Open ▸ Open** is enough.)
+4. dude lives in your **menu bar** (his face, up top) — no Dock icon. Grant the
+   permissions he asks for as you use features (see below).
 
-> dude is self-signed with a stable identity, so once you grant a permission it
+> Because dude is signed with a stable identity, once you grant a permission it
 > sticks across updates — you won't have to re-approve everything each time.
 
 ## Permissions
@@ -64,7 +82,7 @@ Grant these as needed (dude asks only when a feature needs them):
 | Accessibility | Walking to an app's Dock icon |
 | Automation | Controlling Messages / Mail / Spotify |
 
-The 🙂 menu-bar item has **Allow access…** to grant them in one go, plus
+dude's **menu-bar item** has **Allow access…** to grant them in one go, plus
 individual toggles.
 
 ## API key
