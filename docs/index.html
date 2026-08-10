@@ -1,0 +1,384 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="A pixel-art desktop buddy for macOS. dude sees your screen, answers in context, and actually does things — texts, email, calendar, commands — always on your say-so.">
+<link rel="icon" href="./icon.png">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://magwann.github.io/dude/">
+<meta property="og:title" content="dude — a desktop buddy for macOS">
+<meta property="og:description" content="A pixel-art desktop buddy for macOS. dude sees your screen, answers in context, and actually does things — texts, email, calendar, commands — always on your say-so.">
+<meta property="og:image" content="https://magwann.github.io/dude/og.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="dude — a desktop buddy for macOS">
+<meta name="twitter:description" content="A pixel-art desktop buddy for macOS. dude sees your screen, answers in context, and actually does things — texts, email, calendar, commands — always on your say-so.">
+<meta name="twitter:image" content="https://magwann.github.io/dude/og.png">
+<title>dude — a desktop buddy for macOS</title>
+<style>
+  :root {
+    --bg-top:#EAF4ED; --bg-bot:#D4DEDA;
+    --surface:#FBFBF8; --surface-2:#F1F4EF;
+    --ink:#16171E; --ink-soft:#4C5259;
+    --line:#16171E; --line-soft:#C9D2CD;
+    --cream:#F7F6EF;
+    --accent:#2FA26A; --accent-press:#268257; --on-accent:#FBFFF9;
+    --card-shadow:6px 6px 0 var(--ink);
+    --card-shadow-sm:4px 4px 0 var(--ink);
+    --radius:4px;
+    --maxw:1080px;
+    --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg-top:#121A1C; --bg-bot:#0A0E10;
+      --surface:#161E21; --surface-2:#1C2529;
+      --ink:#ECEFEA; --ink-soft:#9BA79F;
+      --line:#33423C; --line-soft:#26312D;
+      --accent:#49C489; --accent-press:#5FD79C; --on-accent:#06130C;
+      --card-shadow:6px 6px 0 #05090A;
+      --card-shadow-sm:4px 4px 0 #05090A;
+    }
+  }
+  :root[data-theme="light"] {
+    --bg-top:#EAF4ED; --bg-bot:#D4DEDA;
+    --surface:#FBFBF8; --surface-2:#F1F4EF;
+    --ink:#16171E; --ink-soft:#4C5259; --line:#16171E; --line-soft:#C9D2CD;
+    --accent:#2FA26A; --accent-press:#268257; --on-accent:#FBFFF9;
+    --card-shadow:6px 6px 0 var(--ink); --card-shadow-sm:4px 4px 0 var(--ink);
+  }
+  :root[data-theme="dark"] {
+    --bg-top:#121A1C; --bg-bot:#0A0E10;
+    --surface:#161E21; --surface-2:#1C2529;
+    --ink:#ECEFEA; --ink-soft:#9BA79F; --line:#33423C; --line-soft:#26312D;
+    --accent:#49C489; --accent-press:#5FD79C; --on-accent:#06130C;
+    --card-shadow:6px 6px 0 #05090A; --card-shadow-sm:4px 4px 0 #05090A;
+  }
+
+  * { box-sizing:border-box; }
+  body {
+    margin:0; font-family:var(--sans); color:var(--ink);
+    background:linear-gradient(180deg,var(--bg-top),var(--bg-bot)) fixed;
+    line-height:1.55; -webkit-font-smoothing:antialiased;
+  }
+  img { max-width:100%; display:block; }
+  a { color:inherit; }
+  .wrap { max-width:var(--maxw); margin:0 auto; padding:0 24px; }
+
+  .eyebrow {
+    font-family:var(--mono); font-size:12px; letter-spacing:.14em;
+    text-transform:uppercase; color:var(--ink-soft);
+  }
+
+  /* ---- top bar ---- */
+  header.nav {
+    display:flex; align-items:center; justify-content:space-between;
+    padding:20px 24px; max-width:var(--maxw); margin:0 auto;
+  }
+  .brand { display:flex; align-items:center; gap:10px; font-weight:800; letter-spacing:-.02em; }
+  .brand .dot { width:14px; height:14px; background:var(--accent); border:2px solid var(--line); }
+  .nav-links { display:flex; gap:22px; font-family:var(--mono); font-size:13px; }
+  .nav-links a { text-decoration:none; color:var(--ink-soft); }
+  .nav-links a:hover { color:var(--ink); }
+  @media (max-width:560px){ .nav-links{ display:none; } }
+
+  /* ---- window primitive ---- */
+  .window {
+    background:var(--surface); border:2px solid var(--line);
+    border-radius:var(--radius); box-shadow:var(--card-shadow);
+  }
+  .titlebar {
+    display:flex; align-items:center; gap:8px;
+    padding:9px 12px; border-bottom:2px solid var(--line);
+    background:var(--surface-2); border-radius:var(--radius) var(--radius) 0 0;
+  }
+  .light { width:11px; height:11px; border:2px solid var(--line); border-radius:2px; }
+  .titlebar .name {
+    margin-left:6px; font-family:var(--mono); font-size:12px;
+    letter-spacing:.06em; color:var(--ink-soft);
+  }
+
+  /* ---- hero ---- */
+  .hero { padding:36px 0 8px; }
+  .hero-grid {
+    display:grid; grid-template-columns:1.35fr 1fr; gap:0; align-items:stretch;
+  }
+  .hero-copy { padding:40px 40px 44px; }
+  .hero-art {
+    border-left:2px solid var(--line); background:
+      radial-gradient(120% 120% at 50% 30%, var(--surface-2), transparent 70%);
+    display:flex; align-items:center; justify-content:center; padding:28px;
+  }
+  @media (max-width:760px){
+    .hero-grid{ grid-template-columns:1fr; }
+    .hero-art{ border-left:none; border-top:2px solid var(--line); order:-1; }
+    .hero-copy{ padding:28px 24px 32px; }
+  }
+  h1.title {
+    font-size:clamp(56px,11vw,120px); line-height:.9; margin:14px 0 0;
+    letter-spacing:-.045em; font-weight:850; text-wrap:balance;
+  }
+  .lede { font-size:clamp(17px,2.2vw,21px); max-width:42ch; margin:18px 0 4px; color:var(--ink); }
+  .lede b { font-weight:700; }
+  .sub { color:var(--ink-soft); max-width:44ch; margin:6px 0 26px; }
+
+  .cta-row { display:flex; align-items:center; gap:14px; flex-wrap:wrap; }
+  .btn {
+    font-family:var(--sans); font-weight:750; font-size:16px;
+    padding:13px 22px; border:2px solid var(--line); border-radius:var(--radius);
+    text-decoration:none; display:inline-flex; align-items:center; gap:10px;
+    box-shadow:var(--card-shadow-sm); transition:transform .08s ease, box-shadow .08s ease;
+  }
+  .btn:active { transform:translate(4px,4px); box-shadow:0 0 0 var(--ink); }
+  .btn-primary { background:var(--accent); color:var(--on-accent); }
+  .btn-ghost { background:var(--surface); color:var(--ink); }
+  .btn:focus-visible { outline:3px solid var(--accent); outline-offset:2px; }
+  .meta { font-family:var(--mono); font-size:12.5px; color:var(--ink-soft); margin-top:16px; letter-spacing:.02em; }
+
+  .mascot {
+    width:min(300px,70%); image-rendering:pixelated;
+    filter:drop-shadow(0 18px 26px rgba(20,30,25,.28));
+    animation:bob 3.6s ease-in-out infinite;
+  }
+  @keyframes bob { 0%,100%{ transform:translateY(0) } 50%{ transform:translateY(-12px) } }
+
+  /* ---- ticker ---- */
+  .ticker {
+    margin-top:26px; border-top:2px solid var(--line); border-bottom:2px solid var(--line);
+    background:var(--ink); color:var(--bg-top); overflow:hidden; white-space:nowrap;
+  }
+  .ticker-track {
+    display:inline-block; padding:11px 0; font-family:var(--mono);
+    font-size:13px; letter-spacing:.08em; text-transform:uppercase;
+    animation:scroll 26s linear infinite;
+  }
+  .ticker-track span { padding:0 26px; opacity:.92; }
+  .ticker-track b { color:var(--accent); }
+  @keyframes scroll { from{ transform:translateX(0) } to{ transform:translateX(-50%) } }
+
+  /* ---- sections ---- */
+  section { padding:64px 0; }
+  .sec-head { max-width:56ch; margin-bottom:34px; }
+  .sec-head h2 { font-size:clamp(28px,4.4vw,40px); letter-spacing:-.03em; margin:8px 0 0; line-height:1.05; text-wrap:balance; }
+  .sec-head p { color:var(--ink-soft); font-size:17px; margin:12px 0 0; }
+
+  .grid { display:grid; grid-template-columns:repeat(3,1fr); gap:20px; }
+  @media (max-width:860px){ .grid{ grid-template-columns:1fr 1fr; } }
+  @media (max-width:520px){ .grid{ grid-template-columns:1fr; } }
+  .card { padding:24px; }
+  .card .ico { width:36px; height:36px; margin-bottom:16px; }
+  .card h3 { font-size:18px; margin:0 0 6px; letter-spacing:-.01em; }
+  .card p { margin:0; color:var(--ink-soft); font-size:15px; }
+  .ico rect, .ico path, .ico circle { shape-rendering:crispEdges; }
+
+  /* ---- trust callout ---- */
+  .trust { display:grid; grid-template-columns:1fr 1fr; gap:36px; align-items:center; }
+  @media (max-width:760px){ .trust{ grid-template-columns:1fr; } }
+  .bubble {
+    position:relative; background:var(--surface); border:2px solid var(--line);
+    border-radius:var(--radius); box-shadow:var(--card-shadow); padding:22px 22px 20px;
+    max-width:420px;
+  }
+  .bubble .msg { font-size:17px; margin:0 0 16px; }
+  .bubble .msg .q { color:var(--ink-soft); }
+  .keys { display:flex; gap:12px; }
+  .key {
+    font-family:var(--mono); font-weight:700; font-size:14px;
+    border:2px solid var(--line); border-radius:3px; padding:8px 16px;
+    box-shadow:0 3px 0 var(--line); background:var(--surface-2);
+  }
+  .key.y { background:var(--accent); color:var(--on-accent); border-color:var(--line); }
+  .bubble .tail { position:absolute; left:34px; bottom:-13px; width:20px; height:20px;
+    background:var(--surface); border-right:2px solid var(--line); border-bottom:2px solid var(--line);
+    transform:rotate(45deg); }
+
+  /* ---- install ---- */
+  .install .window { max-width:760px; }
+  .install .body { padding:26px 28px; }
+  ol.steps { margin:0; padding-left:0; list-style:none; counter-reset:s; display:grid; gap:14px; }
+  ol.steps li { display:grid; grid-template-columns:32px 1fr; gap:14px; align-items:start; }
+  ol.steps li::before {
+    counter-increment:s; content:counter(s); font-family:var(--mono); font-weight:700;
+    width:30px; height:30px; display:grid; place-items:center;
+    border:2px solid var(--line); border-radius:3px; background:var(--surface-2); font-size:14px;
+  }
+  pre.code {
+    margin:8px 0 0; padding:12px 14px; background:var(--ink); color:var(--bg-top);
+    border-radius:3px; overflow-x:auto; font-family:var(--mono); font-size:13px; line-height:1.5;
+  }
+  :root[data-theme="dark"] pre.code, :root:not([data-theme]) pre.code { color:#DCEFE4; }
+  .note { font-size:13.5px; color:var(--ink-soft); margin-top:18px; }
+  .note b { color:var(--ink); }
+
+  /* ---- footer ---- */
+  footer { border-top:2px solid var(--line); padding:40px 0 60px; }
+  .foot { display:flex; justify-content:space-between; gap:24px; flex-wrap:wrap; align-items:center; }
+  .socials { display:flex; gap:12px; }
+  .socials a {
+    font-family:var(--mono); font-size:13px; text-decoration:none; color:var(--ink);
+    border:2px solid var(--line); border-radius:3px; padding:7px 13px; background:var(--surface);
+    box-shadow:var(--card-shadow-sm); transition:transform .08s ease, box-shadow .08s ease;
+  }
+  .socials a:active { transform:translate(4px,4px); box-shadow:0 0 0 var(--ink); }
+  .foot small { color:var(--ink-soft); font-family:var(--mono); font-size:12px; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .mascot{ animation:none; } .ticker-track{ animation:none; }
+    .btn,.socials a{ transition:none; }
+  }
+</style>
+</head>
+<body>
+
+
+<header class="nav">
+  <div class="brand"><span class="dot"></span> dude</div>
+  <nav class="nav-links">
+    <a href="#does">What he does</a>
+    <a href="#install">Install</a>
+    <a href="https://github.com/magwann/dude">GitHub</a>
+  </nav>
+</header>
+
+<main>
+  <!-- HERO -->
+  <div class="wrap hero">
+    <div class="window">
+      <div class="titlebar">
+        <span class="light" style="background:var(--accent)"></span>
+        <span class="light" style="background:var(--cream)"></span>
+        <span class="light" style="background:var(--cream)"></span>
+        <span class="name">dude.app — desktop</span>
+      </div>
+      <div class="hero-grid">
+        <div class="hero-copy">
+          <div class="eyebrow">a desktop buddy for macOS</div>
+          <h1 class="title">dude</h1>
+          <p class="lede">A little pixel guy who lives on your desktop — he
+            <b>sees your screen</b>, answers in context, and actually
+            <b>does things</b> for you.</p>
+          <p class="sub">Think LittleBird, but with a guy who walks over to an
+            app's Dock icon and pulls out his laptop to do the work.</p>
+          <div class="cta-row">
+            <a class="btn btn-primary" href="https://github.com/magwann/dude/releases/latest">▼ Download for macOS</a>
+            <a class="btn btn-ghost" href="https://github.com/magwann/dude">View source</a>
+          </div>
+          <div class="meta">macOS 14+ · free · runs on a free Gemini key</div>
+        </div>
+        <div class="hero-art">
+          <img class="mascot" src="./icon.png" alt="dude, a pixel-art buddy" width="300" height="300">
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- TICKER -->
+  <div class="ticker" aria-hidden="true">
+    <div class="ticker-track">
+      <span>sees your screen</span><span><b>sends your texts</b></span><span>walks to your dock</span><span>adds calendar events</span><span><b>runs a command</b></span><span>reads your mail</span><span>controls spotify</span><span><b>asks first</b></span>
+      <span>sees your screen</span><span><b>sends your texts</b></span><span>walks to your dock</span><span>adds calendar events</span><span><b>runs a command</b></span><span>reads your mail</span><span>controls spotify</span><span><b>asks first</b></span>
+    </div>
+  </div>
+
+  <!-- WHAT HE DOES -->
+  <section id="does" class="wrap">
+    <div class="sec-head">
+      <div class="eyebrow">what he does</div>
+      <h2>Not a chatbot in a box. A buddy who acts.</h2>
+      <p>dude sees what you're doing and can follow through — always on your Mac, always on your say-so.</p>
+    </div>
+    <div class="grid">
+      <div class="window card">
+        <svg class="ico" viewBox="0 0 36 36" fill="none"><rect x="3" y="9" width="30" height="18" stroke="var(--accent)" stroke-width="3"/><rect x="15" y="15" width="6" height="6" fill="var(--ink)"/></svg>
+        <h3>Sees your screen</h3>
+        <p>Captures the display and reads what's actually there with Gemini vision — then answers in context.</p>
+      </div>
+      <div class="window card">
+        <svg class="ico" viewBox="0 0 36 36" fill="none"><path d="M4 18 L30 8 L22 30 L18 20 Z" stroke="var(--accent)" stroke-width="3" stroke-linejoin="round"/></svg>
+        <h3>Does things, not just chat</h3>
+        <p>Sends a text or email, adds an event or reminder, drives Spotify — or runs a shell/AppleScript command.</p>
+      </div>
+      <div class="window card">
+        <svg class="ico" viewBox="0 0 36 36" fill="none"><rect x="6" y="8" width="9" height="9" fill="var(--accent)"/><rect x="21" y="19" width="9" height="9" fill="var(--ink)"/></svg>
+        <h3>Walks to your Dock</h3>
+        <p>When he acts on an app, he strolls to its Dock icon, crouches with his laptop, works, then walks back.</p>
+      </div>
+      <div class="window card">
+        <svg class="ico" viewBox="0 0 36 36" fill="none"><path d="M7 19 L15 27 L29 9" stroke="var(--accent)" stroke-width="4" stroke-linecap="square"/></svg>
+        <h3>Asks before he acts</h3>
+        <p>Anything that leaves your Mac is staged for a quick <b>y / n</b>. Nothing fires behind your back.</p>
+      </div>
+      <div class="window card">
+        <svg class="ico" viewBox="0 0 36 36" fill="none"><rect x="5" y="10" width="26" height="18" stroke="var(--accent)" stroke-width="3"/><rect x="5" y="10" width="12" height="6" fill="var(--ink)"/></svg>
+        <h3>Knows your stuff, on demand</h3>
+        <p>Pulls in Messages, Mail, Calendar and Reminders only when your question is actually about them.</p>
+      </div>
+      <div class="window card">
+        <svg class="ico" viewBox="0 0 36 36" fill="none"><rect x="14" y="5" width="8" height="16" rx="1" fill="var(--accent)"/><path d="M9 18 a9 9 0 0 0 18 0 M18 27 v4" stroke="var(--ink)" stroke-width="3"/></svg>
+        <h3>Talk or type</h3>
+        <p>Click him, hit <b>⌃⌥D</b>, or just talk — on-device speech turns your voice into the ask.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- TRUST -->
+  <section class="wrap">
+    <div class="trust">
+      <div>
+        <div class="eyebrow">on your say-so</div>
+        <h2 style="font-size:clamp(26px,4vw,36px);letter-spacing:-.03em;margin:8px 0 14px;line-height:1.06;">He stages it. You hit a key.</h2>
+        <p style="color:var(--ink-soft);font-size:17px;margin:0 0 10px;">Texts, emails and commands never fire on their own. dude shows you exactly what he's about to do and waits for a single keystroke — <b style="color:var(--ink)">y</b> to send, <b style="color:var(--ink)">n</b> to drop it.</p>
+        <p style="color:var(--ink-soft);font-size:15px;margin:0;">Everything runs locally. Only your screenshot and question go to the API, and only when you ask.</p>
+      </div>
+      <div style="display:flex;justify-content:center;">
+        <div class="bubble">
+          <p class="msg"><span class="q">You:</span> tell Gavin I'm running 10 late<br><br>Text <b>Gavin</b>: "running 10 late" — want me to send it?</p>
+          <div class="keys"><span class="key y">Y — send</span><span class="key">N — nope</span></div>
+          <span class="tail"></span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- INSTALL -->
+  <section id="install" class="wrap install">
+    <div class="sec-head">
+      <div class="eyebrow">install</div>
+      <h2>Up and running in a minute.</h2>
+      <p>dude is self-signed (no paid Apple account yet), so macOS asks you to confirm it once. Here's the whole dance.</p>
+    </div>
+    <div class="window">
+      <div class="titlebar">
+        <span class="light" style="background:var(--accent)"></span>
+        <span class="light" style="background:var(--cream)"></span>
+        <span class="light" style="background:var(--cream)"></span>
+        <span class="name">Install dude</span>
+      </div>
+      <div class="body">
+        <ol class="steps">
+          <li><div><b>Download <a style="color:var(--accent);text-decoration:none;font-weight:700" href="https://github.com/magwann/dude/releases/latest">Dude.dmg</a></b> and open it.</div></li>
+          <li><div>Drag <b>dude</b> onto <b>Applications</b>.</div></li>
+          <li><div>If macOS says it's "damaged" or won't open, clear the quarantine flag, then launch it:
+            <pre class="code">xattr -dr com.apple.quarantine /Applications/dude.app</pre></div></li>
+          <li><div>He lands in your <b>menu bar</b> (his face, up top). Grant permissions as features ask.</div></li>
+        </ol>
+        <p class="note"><b>Want real answers?</b> dude runs in a limited stub without a key. Drop a <b>free</b> Google Gemini key at <code style="font-family:var(--mono)">~/.dude/config.json</code> or set <code style="font-family:var(--mono)">GOOGLE_API_KEY</code>. The key never leaves your machine.</p>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <div class="wrap foot">
+      <div class="socials">
+        <a href="https://instagram.com/getdude">Instagram ↗</a>
+        <a href="https://x.com/getdude">X ↗</a>
+        <a href="https://github.com/magwann/dude">GitHub ↗</a>
+      </div>
+      <small>self-signed · notarization pending · macOS-only, by design</small>
+    </div>
+  </footer>
+</main>
+
+</body>
+</html>
