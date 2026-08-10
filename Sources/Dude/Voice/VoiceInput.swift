@@ -139,7 +139,11 @@ final class VoiceInput: ObservableObject {
         case .authorized: return true
         case .notDetermined:
             return await withCheckedContinuation { cont in
-                SFSpeechRecognizer.requestAuthorization { cont.resume(returning: $0 == .authorized) }
+                // The completion lands on a background thread; @Sendable keeps it
+                // non-isolated so VoiceInput's @MainActor doesn't trap off-main.
+                SFSpeechRecognizer.requestAuthorization { @Sendable status in
+                    cont.resume(returning: status == .authorized)
+                }
             }
         default: return false
         }

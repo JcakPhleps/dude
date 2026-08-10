@@ -1,5 +1,6 @@
 import AppKit
 import Carbon.HIToolbox
+import Combine
 import SwiftUI
 
 extension Notification.Name {
@@ -20,6 +21,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var watchItem: NSMenuItem?
     private var readMessagesItem: NSMenuItem?
 
+    /// Catches a bare y/n keypress to confirm a staged action.
+    private var keyMonitor: Any?
+    private var confirmCancellable: AnyCancellable?
+
     private let observeDefaultsKey = "dude.observeEnabled"
     private let readMessagesKey = "dude.readMessages"
 
@@ -27,6 +32,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.setActivationPolicy(.accessory)
         setUpStatusItem()
         setUpHotKey()
+        setUpConfirmationKeys()
         showPet()
 
         // Resume background watching if it was on last time (default: on).
@@ -66,8 +72,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func setUpStatusItem() {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        item.button?.title = "🙂"
-        item.button?.toolTip = "dude"
+        if let button = item.button {
+            // Dude's own face in the menu bar — more recognizable than an emoji.
+            // Rendered in color (not a template) so the eyes/face read; a template
+            // would flatten the whole head into a solid blob.
+            let icon = NSImage(named: "MenuBarDude")
+            icon?.isTemplate = false
+            icon?.size = NSSize(width: 25, height: 18)
+            button.image = icon
+            button.imagePosition = .imageOnly
+            button.toolTip = "dude"
+        }
 
         let menu = NSMenu()
         menu.addItem(withTitle: "Ask dude…", action: #selector(askDude), keyEquivalent: "")
@@ -92,11 +107,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         reflectWatchState()
     }
 
-    /// Mirror the observer's on/off state into the menu checkmark and the
-    /// status-bar face (👀 while watching).
+    /// Mirror the observer's on/off state into the menu checkmark. (The status-bar
+    /// icon stays Dude's face regardless of watch state.)
     private func reflectWatchState() {
         watchItem?.state = observer.isRunning ? .on : .off
-        statusItem?.button?.title = observer.isRunning ? "👀" : "🙂"
     }
 
     @objc private func toggleReadMessages() {
@@ -159,6 +173,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func openFullDiskAccess() {
         if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles") {
             NSWorkspace.shared.open(url)
+        }
+    }
+
+    // MARK: - y/n confirmation
+
+    /// When Dude has staged an action, let the user okay it with a single `y`
+    /// (or wave it off with `n`) instead of typing a whole reply. A local key
+    /// monitor only fires while one of our windows is key, so we also nudge the
+    /// pet panel to become key the moment a confirmation appears.
+    private func setUpConfirmationKeys() {
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self, self.handleConfirmationKey(event) else { return event }
+            return nil   // swallow the key so it doesn't bleed elsewhere
+        }
+        confirmCancellable = brain.$awaitingConfirmation
+            .removeDuplicates()
+            .sink { [weak self] awaiting in
+                if awaiting { self?.petPanel?.makeKeyAndOrderFront(nil) }
+            }
+    }
+
+    /// Returns true if the event was a confirmation keypress we handled.
+    private func handleConfirmationKey(_ event: NSEvent) -> Bool {
+        guard brain.awaitingConfirmation else { return false }
+        // Don't hijack keys while the user is typing (e.g. the ask field is
+        // open) — the field editor is the first responder then.
+        if let responder = event.window?.firstResponder, responder is NSText { return false }
+        // Only a plain keypress, no modifiers.
+        guard event.modifierFlags.intersection([.command, .control, .option, .function]).isEmpty else {
+            return false
+        }
+        switch event.charactersIgnoringModifiers?.lowercased() {
+        case "y": brain.confirmPending(); return true
+        case "n": brain.cancelPending(); return true
+        default:  return false
         }
     }
 

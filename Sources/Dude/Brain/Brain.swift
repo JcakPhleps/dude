@@ -28,12 +28,26 @@ final class Brain: ObservableObject {
     @Published var latestReply: String = ""
     @Published var isBusy = false
 
+    /// True while Dude has a staged action waiting on a yes/no. The UI watches
+    /// this to show a "(y / n)" hint and to route bare y/n keypresses.
+    @Published private(set) var awaitingConfirmation = false
+
     private let memory: MemoryStore
     private let client = GeminiClient()
 
     /// An outward action (text/email) Dude has proposed and is waiting on the
     /// user to confirm before it actually leaves the machine.
-    private var pendingAction: ActionRunner.Pending?
+    private var pendingAction: ActionRunner.Pending? {
+        didSet { awaitingConfirmation = pendingAction != nil }
+    }
+
+    /// Bubbles Dude still has to say, shown one after another. Lets him fire off
+    /// a run of short messages back-to-back on his own, instead of one reply per
+    /// user turn.
+    private var messageQueue: [String] = []
+    /// True while a `drainMessages` task is walking the queue, so we don't start
+    /// a second one.
+    private var speaking = false
 
     /// Cap on model↔tool round-trips per ask, so a confused loop can't spin.
     private let maxToolRounds = 5
@@ -58,22 +72,13 @@ final class Brain: ObservableObject {
         // Only a clear yes actually sends; a clear no cancels; anything else
         // keeps it staged and re-asks — we never fabricate or guess a send.
         if let pending = pendingAction {
-            if isAffirmative(trimmed) {
-                pendingAction = nil
-                await commit(pending)
-                return
-            }
-            if isNegative(trimmed) {
-                pendingAction = nil
-                latestReply = "Cool, left it alone."
-                mood = .talking
-                return
-            }
-            latestReply = "Just so I don't send the wrong thing — \(pending.confirmationPrompt) (yes / no)"
-            mood = .talking
+            if isAffirmative(trimmed) { confirmPending(); return }
+            if isNegative(trimmed) { cancelPending(); return }
+            say("Just so I don't send the wrong thing — \(pending.confirmationPrompt)")
             return
         }
 
+        clearMessages()
         isBusy = true
         mood = .thinking
         defer { isBusy = false }
@@ -134,9 +139,8 @@ final class Brain: ObservableObject {
 
         // 3. No key → stub mode so the app stays demoable.
         guard Secrets.hasKey else {
-            latestReply = stubReply(question: trimmed, shot: shot, notes: notes)
+            show(stubReply(question: trimmed, shot: shot, notes: notes), mood: .stumped)
             memory.record("Asked: \(trimmed) (stub — no API key)")
-            mood = .stumped
             return
         }
 
@@ -160,17 +164,20 @@ final class Brain: ObservableObject {
             do {
                 turn = try await client.generate(system: system, history: history, useTools: true)
             } catch {
-                latestReply = "Hmm, I couldn't reach my brain: \(error.localizedDescription)"
-                mood = .stumped
+                show("Hmm, I couldn't reach my brain: \(error.localizedDescription)", mood: .stumped)
                 return
             }
 
             guard !turn.calls.isEmpty else {
-                latestReply = turn.text ?? "…"
+                say(turn.text ?? "…")
                 memory.record("Q: \(question) → A: \((turn.text ?? "").prefix(160))")
-                mood = .talking
                 return
             }
+
+            // If he said something *alongside* calling a tool ("sure, sending
+            // that now") let that land as its own bubble before he acts — so he
+            // can talk and do in one turn, back-to-back, without a nudge.
+            if let intro = turn.text, !intro.isEmpty { say(intro) }
 
             // Echo the model's tool calls back verbatim — id + thoughtSignature
             // included, or Gemini 3.x rejects the follow-up — then run them and
@@ -200,14 +207,30 @@ final class Brain: ObservableObject {
         }
 
         // Ran out of rounds without a plain-text reply.
-        latestReply = pendingAction?.confirmationPrompt ?? "Okay, handled what I could."
-        mood = .talking
+        say(pendingAction?.confirmationPrompt ?? "Okay, handled what I could.")
+    }
+
+    // MARK: - Confirming a staged action
+
+    /// The user said yes (typed, or the `y` key) to a staged send/command.
+    func confirmPending() {
+        guard let pending = pendingAction, !isBusy else { return }
+        pendingAction = nil
+        Task { await commit(pending) }
+    }
+
+    /// The user said no (typed, or the `n` key). Drop the staged action.
+    func cancelPending() {
+        guard pendingAction != nil else { return }
+        pendingAction = nil
+        say("Cool, left it alone.")
     }
 
     /// Run a previously-staged outward action after the user confirmed. If it's
     /// tied to an app, Dude walks over to its Dock icon, does it at his laptop,
     /// and strolls back before reporting.
     private func commit(_ pending: ActionRunner.Pending) async {
+        clearMessages()   // drop the confirm bubble; he's on it now
         isBusy = true
         mood = .thinking
         defer { isBusy = false }
@@ -218,15 +241,12 @@ final class Brain: ObservableObject {
 
         switch outcome {
         case .done(let result):
-            latestReply = result
+            say(result)
             memory.record("Did: \(result)")
-            mood = .talking
         case .failed(let why):
-            latestReply = why
-            mood = .stumped
+            show(why, mood: .stumped)
         case .staged:
-            latestReply = "…"
-            mood = .idle
+            show("…", mood: .idle)
         }
     }
 
@@ -242,6 +262,66 @@ final class Brain: ObservableObject {
         }
         mood = .thinking
         return false
+    }
+
+    // MARK: - Talking (a queue of bubbles)
+
+    /// Have Dude say something. A reply with blank-line breaks lands as several
+    /// bubbles in a row, each held for a beat before the next — so he can talk
+    /// in a natural run of short messages instead of one wall of text, and keep
+    /// going on his own without the user prompting between each.
+    func say(_ message: String) {
+        enqueue(splitIntoMessages(message))
+    }
+
+    /// A single terminal message with an explicit mood (errors, stub replies).
+    /// Clears anything queued so it doesn't get talked over.
+    private func show(_ text: String, mood m: Mood) {
+        messageQueue.removeAll()
+        latestReply = text
+        mood = m
+    }
+
+    /// Wipe anything queued or on screen (the user dismissed the bubble).
+    func clearMessages() {
+        messageQueue.removeAll()
+        latestReply = ""
+    }
+
+    private func enqueue(_ messages: [String]) {
+        guard !messages.isEmpty else { return }
+        messageQueue.append(contentsOf: messages)
+        guard !speaking else { return }
+        speaking = true
+        Task { await drainMessages() }
+    }
+
+    private func drainMessages() async {
+        defer { speaking = false }
+        while !messageQueue.isEmpty {
+            let next = messageQueue.removeFirst()
+            latestReply = next
+            if mood != .dancing { mood = .talking }
+            // Hold on the final line; between lines, pause long enough to read.
+            if !messageQueue.isEmpty {
+                try? await Task.sleep(nanoseconds: dwell(for: next))
+            }
+        }
+    }
+
+    /// Split a reply on blank lines into separate bubbles, trimmed and non-empty.
+    private func splitIntoMessages(_ text: String) -> [String] {
+        text.components(separatedBy: "\n\n")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+    }
+
+    /// Roughly reading time for a bubble before the next one: a base beat plus a
+    /// little per word, capped so a long one doesn't stall the whole run.
+    private func dwell(for message: String) -> UInt64 {
+        let words = message.split { $0 == " " || $0 == "\n" }.count
+        let seconds = min(6.0, 1.8 + Double(words) * 0.28)
+        return UInt64(seconds * 1_000_000_000)
     }
 
     /// Called by the UI when the speech bubble is dismissed.
@@ -282,9 +362,8 @@ final class Brain: ObservableObject {
     /// bubble or interrupt an in-progress ask.
     func proactivelySay(_ message: String) {
         let text = message.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty, !isBusy, latestReply.isEmpty, mood != .dancing else { return }
-        latestReply = text
-        mood = .talking
+        guard !text.isEmpty, !isBusy, latestReply.isEmpty, messageQueue.isEmpty, mood != .dancing else { return }
+        say(text)
         memory.record("Offered: \(text.prefix(120))")
     }
 

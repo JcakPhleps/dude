@@ -49,8 +49,15 @@ struct PetRootView: View {
         // While he's walking over or crouched at the laptop, keep quiet — he's
         // busy, but he does his talking once he's back.
         if brain.mood == .walking || brain.mood == .atLaptop { return nil }
-        if brain.isBusy { return "…" }
-        return brain.latestReply.isEmpty ? nil : brain.latestReply
+        // Show whatever he's currently saying; only fall back to the thinking
+        // dots when he's busy and hasn't said anything yet.
+        guard !brain.latestReply.isEmpty else {
+            return brain.isBusy ? "…" : nil
+        }
+        if brain.awaitingConfirmation {
+            return brain.latestReply + "\n\n(y = yes · n = no)"
+        }
+        return brain.latestReply
     }
 
     private func toggleAsk() {
@@ -69,7 +76,7 @@ struct PetRootView: View {
     }
 
     private func dismissBubble() {
-        brain.latestReply = ""
+        brain.clearMessages()
         brain.settle()
     }
 }

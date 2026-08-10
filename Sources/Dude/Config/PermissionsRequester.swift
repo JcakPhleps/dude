@@ -64,7 +64,12 @@ enum PermissionsRequester {
             granted = true
         case .notDetermined:
             granted = await withCheckedContinuation { cont in
-                CNContactStore().requestAccess(for: .contacts) { ok, _ in cont.resume(returning: ok) }
+                // TCC fires this completion on a background XPC thread. The block
+                // must be @Sendable (non-isolated) or Swift's main-actor
+                // isolation check traps (EXC_BREAKPOINT) when it's called off-main.
+                CNContactStore().requestAccess(for: .contacts) { @Sendable ok, _ in
+                    cont.resume(returning: ok)
+                }
             }
         default:
             granted = false
@@ -93,7 +98,11 @@ enum PermissionsRequester {
 
     private static func requestSpeech() async -> Outcome {
         let status: SFSpeechRecognizerAuthorizationStatus = await withCheckedContinuation { cont in
-            SFSpeechRecognizer.requestAuthorization { cont.resume(returning: $0) }
+            // Same story as Contacts: this callback lands on a background thread,
+            // so the block must be @Sendable to avoid a main-actor isolation trap.
+            SFSpeechRecognizer.requestAuthorization { @Sendable status in
+                cont.resume(returning: status)
+            }
         }
         let granted = status == .authorized
         return Outcome(name: "Speech Recognition", granted: granted,
