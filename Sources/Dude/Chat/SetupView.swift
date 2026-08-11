@@ -9,6 +9,9 @@ struct SetupView: View {
     // Common handles surfaced as explicit fields; stored in profile.socialHandles.
     private let handleKeys = ["x", "instagram", "github", "linkedin"]
 
+    /// The Gemini key, loaded from ~/.dude/config.json and saved back on Done.
+    @State private var apiKey = ""
+
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text("Set up dude")
@@ -39,15 +42,28 @@ struct SetupView: View {
                 }
             }
 
-            if !Secrets.hasKey {
-                Text("Tip: grab a free Google (Gemini) key at aistudio.google.com/apikey, then drop it at \(Secrets.configPath) (or set GOOGLE_API_KEY) so I can actually read your screen.")
-                    .font(.callout)
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Gemini API key").font(.headline)
+                Text("Lets me actually see your screen and answer. Free, with a no-cost tier.")
+                    .font(.caption)
                     .foregroundStyle(.secondary)
+                SecureField("AIza…", text: $apiKey)
+                    .textFieldStyle(.roundedBorder)
+                HStack(spacing: 12) {
+                    Link("Get a free key ↗", destination: URL(string: "https://aistudio.google.com/apikey")!)
+                        .font(.caption)
+                    if usingEnvKey {
+                        Text("Using a key from your environment.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
             }
 
             HStack {
                 Spacer()
                 Button("Done") {
+                    Secrets.setGoogleAPIKey(apiKey)
                     memory.saveProfile()
                     onDone()
                 }
@@ -56,6 +72,13 @@ struct SetupView: View {
         }
         .padding(24)
         .frame(width: 420)
+        .onAppear { apiKey = Secrets.storedAPIKey ?? "" }
+    }
+
+    /// True when a key is coming from an env var (not the file) — the field edits
+    /// the file, so we flag that the environment would still take precedence.
+    private var usingEnvKey: Bool {
+        Secrets.storedAPIKey == nil && Secrets.hasKey
     }
 
     private func binding(for key: String) -> Binding<String> {

@@ -30,10 +30,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
+        Secrets.bootstrapConfig()   // ensure ~/.dude/ + a starter config exist
         setUpStatusItem()
         setUpHotKey()
         setUpConfirmationKeys()
         showPet()
+
+        // Quiet, once-a-day check for a newer release.
+        Task { await self.autoCheckForUpdates() }
 
         // Resume background watching if it was on last time (default: on).
         let enabled = UserDefaults.standard.object(forKey: observeDefaultsKey) as? Bool ?? true
@@ -94,6 +98,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(withTitle: "Walk to apps (Accessibility)…", action: #selector(allowAccessibility), keyEquivalent: "")
         menu.addItem(withTitle: "Full Disk Access…", action: #selector(openFullDiskAccess), keyEquivalent: "")
         menu.addItem(withTitle: "Setup…", action: #selector(openSetup), keyEquivalent: "")
+        menu.addItem(.separator())
+        menu.addItem(withTitle: "Check for Updates…", action: #selector(checkForUpdates), keyEquivalent: "")
         menu.addItem(.separator())
         menu.addItem(withTitle: "Quit dude", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         for menuItem in menu.items { menuItem.target = self }
@@ -173,6 +179,62 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func openFullDiskAccess() {
         if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles") {
             NSWorkspace.shared.open(url)
+        }
+    }
+
+    // MARK: - Updates
+
+    /// Menu-driven check: always tells the user the result, even when current.
+    @objc private func checkForUpdates() {
+        Task { @MainActor in
+            guard let latest = await UpdateChecker.latestRelease() else {
+                let alert = NSAlert()
+                alert.messageText = "Couldn't check for updates"
+                alert.informativeText = "I couldn't reach GitHub just now. Try again in a bit."
+                alert.addButton(withTitle: "OK")
+                NSApp.activate(ignoringOtherApps: true)
+                alert.runModal()
+                return
+            }
+            if UpdateChecker.isNewer(latest.version, than: UpdateChecker.currentVersion) {
+                presentUpdate(latest)
+            } else {
+                let alert = NSAlert()
+                alert.messageText = "You're up to date"
+                alert.informativeText = "dude \(UpdateChecker.currentVersion) is the latest."
+                alert.addButton(withTitle: "OK")
+                NSApp.activate(ignoringOtherApps: true)
+                alert.runModal()
+            }
+        }
+    }
+
+    /// Background check on launch — silent unless there's actually a newer build,
+    /// and no more than once a day so it never nags.
+    private func autoCheckForUpdates() async {
+        let key = "dude.lastUpdateCheck"
+        let now = Date().timeIntervalSince1970
+        let last = UserDefaults.standard.double(forKey: key)
+        guard now - last > 60 * 60 * 24 else { return }
+        UserDefaults.standard.set(now, forKey: key)
+        if let update = await UpdateChecker.availableUpdate() {
+            await MainActor.run { self.presentUpdate(update) }
+        }
+    }
+
+    /// Offer the download for a newer release.
+    private func presentUpdate(_ release: UpdateChecker.Release) {
+        let alert = NSAlert()
+        alert.messageText = "Update available — dude \(release.version)"
+        let notes = release.notes.trimmingCharacters(in: .whitespacesAndNewlines)
+        alert.informativeText = notes.isEmpty
+            ? "You're on \(UpdateChecker.currentVersion). Download \(release.version)?"
+            : String(notes.prefix(600))
+        alert.addButton(withTitle: "Download")
+        alert.addButton(withTitle: "Later")
+        NSApp.activate(ignoringOtherApps: true)
+        if alert.runModal() == .alertFirstButtonReturn {
+            NSWorkspace.shared.open(release.dmgURL ?? release.pageURL)
         }
     }
 

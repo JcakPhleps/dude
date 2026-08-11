@@ -30,6 +30,56 @@ enum Secrets {
 
     static var hasKey: Bool { googleAPIKey != nil }
 
+    /// The key saved in `~/.dude/config.json` (ignoring the environment), so the
+    /// Setup UI can show and edit exactly what the user typed.
+    static var storedAPIKey: String? { configValue(for: "google_api_key") }
+
+    /// Save (or clear, if empty) the Gemini key to `~/.dude/config.json`, keeping
+    /// any other settings intact. Creates the folder if needed.
+    static func setGoogleAPIKey(_ key: String) {
+        setConfigValue(key.trimmingCharacters(in: .whitespacesAndNewlines), for: "google_api_key")
+    }
+
+    /// Make sure `~/.dude/` exists with a starter config the first time Dude runs,
+    /// so people always have a place (and a template) for their key — even before
+    /// they open Setup. Safe to call on every launch.
+    static func bootstrapConfig() {
+        let fm = FileManager.default
+        try? fm.createDirectory(at: configDirURL, withIntermediateDirectories: true)
+
+        if !fm.fileExists(atPath: configURL.path(percentEncoded: false)) {
+            let template = """
+            {
+              "google_api_key": "",
+              "gemini_model": "\(defaultGeminiModel)"
+            }
+            """
+            try? template.data(using: .utf8)?.write(to: configURL)
+        }
+
+        let readme = configDirURL.appendingPathComponent("README.txt")
+        if !fm.fileExists(atPath: readme.path(percentEncoded: false)) {
+            let text = """
+            dude — settings folder
+            ======================
+
+            Your Gemini API key and preferences live in config.json (in this folder).
+            The easy way to set your key is in the app: click dude ▸ menu-bar item ▸
+            Setup… and paste it there.
+
+            Or edit config.json by hand:
+              {
+                "google_api_key": "PASTE_YOUR_KEY_HERE",
+                "gemini_model": "\(defaultGeminiModel)"
+              }
+
+            Get a free key at https://aistudio.google.com/apikey
+            Nothing here is ever uploaded except the key you choose to use.
+            """
+            try? text.data(using: .utf8)?.write(to: readme)
+        }
+    }
+
     static var geminiModel: String {
         configValue(for: "gemini_model") ?? defaultGeminiModel
     }
@@ -47,10 +97,28 @@ enum Secrets {
         configURL.path(percentEncoded: false)
     }
 
-    private static var configURL: URL {
+    private static var configDirURL: URL {
         FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".dude", isDirectory: true)
-            .appendingPathComponent("config.json")
+    }
+
+    private static var configURL: URL {
+        configDirURL.appendingPathComponent("config.json")
+    }
+
+    /// Read the config (or an empty dict), set/clear one key, write it back
+    /// pretty-printed. Creates `~/.dude/` if it isn't there yet.
+    private static func setConfigValue(_ value: String, for key: String) {
+        try? FileManager.default.createDirectory(at: configDirURL, withIntermediateDirectories: true)
+        var dict: [String: Any] = [:]
+        if let data = try? Data(contentsOf: configURL),
+           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            dict = json
+        }
+        if value.isEmpty { dict.removeValue(forKey: key) } else { dict[key] = value }
+        if let data = try? JSONSerialization.data(withJSONObject: dict, options: [.prettyPrinted, .sortedKeys]) {
+            try? data.write(to: configURL)
+        }
     }
 
     private static func configValue(for key: String) -> String? {
