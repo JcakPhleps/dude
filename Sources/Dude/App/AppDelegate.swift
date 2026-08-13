@@ -101,8 +101,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(.separator())
         menu.addItem(withTitle: "Check for Updates…", action: #selector(checkForUpdates), keyEquivalent: "")
         menu.addItem(.separator())
-        menu.addItem(withTitle: "Quit dude", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
-        for menuItem in menu.items { menuItem.target = self }
+        let quitItem = menu.addItem(withTitle: "Quit dude", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        quitItem.target = NSApp
+        for menuItem in menu.items where menuItem !== quitItem { menuItem.target = self }
         item.menu = menu
         statusItem = item
     }
