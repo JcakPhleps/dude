@@ -23,6 +23,10 @@ final class Brain: ObservableObject {
     var walkToApp: ((String) async -> Bool)?
     /// Walk him back to his usual corner.
     var walkHome: (() async -> Void)?
+    /// Set by the app so Dude can walk to a spot on the captured display and
+    /// click it for real. `nx`/`ny` are normalized 0…1 (left→right, top→bottom).
+    /// Returns true if the click happened, false if he couldn't (no Accessibility).
+    var clickOnScreen: ((_ nx: Double, _ ny: Double) async -> Bool)?
 
     @Published var mood: Mood = .idle
     @Published var latestReply: String = ""
@@ -72,10 +76,13 @@ final class Brain: ObservableObject {
         // Only a clear yes actually sends; a clear no cancels; anything else
         // keeps it staged and re-asks — we never fabricate or guess a send.
         if let pending = pendingAction {
-            if isAffirmative(trimmed) { confirmPending(); return }
-            if isNegative(trimmed) { cancelPending(); return }
-            say("Just so I don't send the wrong thing — \(pending.confirmationPrompt)")
-            return
+            switch ConfirmationParser.interpret(trimmed) {
+            case .yes: confirmPending(); return
+            case .no: cancelPending(); return
+            case .unclear:
+                say("Just so I don't send the wrong thing — \(pending.confirmationPrompt)")
+                return
+            }
         }
 
         clearMessages()
@@ -98,8 +105,9 @@ final class Brain: ObservableObject {
         // 2. Pull in personal-data sources — each only when the question is
         //    actually about it, and never in the background.
         var context: [String] = []
+        let wants = QueryClassifier.sources(in: trimmed)
 
-        if readMessagesEnabled, isMessageQuery(trimmed) {
+        if readMessagesEnabled, wants.contains(.message) {
             if !Permissions.hasFullDiskAccess {
                 notes.append(fdaNote)
             } else if let msgs = try? MessagesSource.recentMessages(limit: 15) {
@@ -109,7 +117,7 @@ final class Brain: ObservableObject {
             }
         }
 
-        if isEmailQuery(trimmed) {
+        if wants.contains(.email) {
             if !Permissions.hasFullDiskAccess {
                 notes.append(fdaNote)
             } else if let emails = try? MailSource.recentEmails(limit: 12) {
@@ -119,7 +127,7 @@ final class Brain: ObservableObject {
             }
         }
 
-        if isCalendarQuery(trimmed) {
+        if wants.contains(.calendar) {
             if let events = await EventKitSource.upcomingEvents() {
                 context.append("Upcoming calendar events:\n" +
                     (events.isEmpty ? "(nothing in the next week)" : events.joined(separator: "\n")))
@@ -128,7 +136,7 @@ final class Brain: ObservableObject {
             }
         }
 
-        if isReminderQuery(trimmed) {
+        if wants.contains(.reminder) {
             if let reminders = await EventKitSource.openReminders() {
                 context.append("Open reminders:\n" +
                     (reminders.isEmpty ? "(none)" : reminders.joined(separator: "\n")))
@@ -152,15 +160,15 @@ final class Brain: ObservableObject {
     /// Drives the model↔tool conversation: send the ask, run any tool calls the
     /// model makes, feed the results back, and repeat until it produces a reply.
     private func runToolLoop(question: String, notes: [String], context: [String], shot: ScreenCapture.Shot?) async {
-        var userParts: [GeminiClient.Part] = []
+        var userParts: [Gemini.Part] = []
         if let b64 = shot?.jpegBase64 { userParts.append(.image(base64: b64)) }
         userParts.append(.text(notes.isEmpty ? question : "\(question)\n\n(Note: \(notes.joined(separator: " ")))"))
 
-        var history: [GeminiClient.Turn] = [.init(role: "user", parts: userParts)]
+        var history: [Gemini.Turn] = [.init(role: "user", parts: userParts)]
         let system = systemPrompt(context: context)
 
         for _ in 0..<maxToolRounds {
-            let turn: GeminiClient.ModelTurn
+            let turn: Gemini.ModelTurn
             do {
                 turn = try await client.generate(system: system, history: history, useTools: true)
             } catch {
@@ -187,7 +195,7 @@ final class Brain: ObservableObject {
                               id: $0.id, thoughtSignature: $0.thoughtSignature)
             }))
 
-            var responses: [GeminiClient.Part] = []
+            var responses: [Gemini.Part] = []
             for call in turn.calls {
                 let outcome = await ActionRunner.handle(name: call.name, args: call.args)
                 let result: String
@@ -200,6 +208,22 @@ final class Brain: ObservableObject {
                 case .staged(let pending, let note):
                     pendingAction = pending
                     result = note
+                case .click(let nx, let ny, let label):
+                    let ok = await performClick(nx: nx, ny: ny)
+                    if ok {
+                        memory.record("Clicked: \(label)")
+                        result = "Clicked \(label)."
+                    } else {
+                        result = "FAILED: \(accessibilityHint)"
+                    }
+                case .type(let text, let submit):
+                    let ok = await performType(text, submit: submit)
+                    if ok {
+                        memory.record("Typed: \(text.prefix(80))")
+                        result = "Typed “\(text)”\(submit ? " and pressed Return." : ".")"
+                    } else {
+                        result = "FAILED: \(accessibilityHint)"
+                    }
                 }
                 responses.append(.functionResponse(name: call.name, id: call.id, result: result))
             }
@@ -247,6 +271,10 @@ final class Brain: ObservableObject {
             show(why, mood: .stumped)
         case .staged:
             show("…", mood: .idle)
+        case .click, .type:
+            // `commit` only runs staged sends/commands; on-screen clicks and
+            // typing are handled inline in the tool loop, never here.
+            break
         }
     }
 
@@ -263,6 +291,34 @@ final class Brain: ObservableObject {
         mood = .thinking
         return false
     }
+
+    /// Walk over to a spot on screen, click it, and stroll back — the visible
+    /// beat that makes a click feel like Dude actually did it. Returns whether
+    /// the click landed (false if Accessibility isn't granted).
+    private func performClick(nx: Double, ny: Double) async -> Bool {
+        guard let click = clickOnScreen else { return false }
+        mood = .walking
+        let ok = await click(nx, ny)   // strolls to the point, then clicks
+        if ok {
+            mood = .atLaptop
+            await walkHome?()
+        }
+        mood = .thinking
+        return ok
+    }
+
+    /// Type into whatever field is focused. No walking — he types wherever the
+    /// cursor is — but he crouches with his laptop while he does it.
+    private func performType(_ text: String, submit: Bool) async -> Bool {
+        guard ScreenClicker.isTrusted else { return false }
+        mood = .atLaptop
+        let ok = await ScreenClicker.type(submit ? text + "\n" : text)
+        mood = .thinking
+        return ok
+    }
+
+    /// Shared nudge when an on-screen action needs Accessibility.
+    private let accessibilityHint = "I can't drive the keyboard/mouse yet — turn on Accessibility for Dude in System Settings ▸ Privacy & Security ▸ Accessibility (the same one that lets me walk to apps)."
 
     // MARK: - Talking (a queue of bubbles)
 
@@ -394,53 +450,6 @@ final class Brain: ObservableObject {
 
     private let fdaNote = "I can't read that yet. Turn on Full Disk Access for Dude in System Settings ▸ Privacy & Security ▸ Full Disk Access, then FULLY QUIT and reopen me — the grant only kicks in on a fresh launch."
 
-    private func isMessageQuery(_ q: String) -> Bool {
-        let l = q.lowercased()
-        return ["message", "text", "imessage", "dm", "hear from", "who wrote", "any word"].contains { l.contains($0) }
-    }
-
-    private func isEmailQuery(_ q: String) -> Bool {
-        let l = q.lowercased()
-        return ["email", "e-mail", "inbox", "mailbox", "gmail"].contains { l.contains($0) } || l.contains("mail")
-    }
-
-    private func isCalendarQuery(_ q: String) -> Bool {
-        let l = q.lowercased()
-        return ["calendar", "schedule", "agenda", "event", "meeting", "appointment", "what's on", "whats on", "free today", "busy"].contains { l.contains($0) }
-    }
-
-    private func isReminderQuery(_ q: String) -> Bool {
-        let l = q.lowercased()
-        return ["reminder", "to-do", "todo", "to do", "task"].contains { l.contains($0) }
-    }
-
-    // MARK: - Confirmation
-
-    private func isAffirmative(_ q: String) -> Bool {
-        let l = normalizeConfirm(q)
-        let words = ["yes", "yep", "yeah", "yea", "ya", "yah", "yuh", "yup", "yis",
-                     "sure", "ok", "okay", "k", "kk", "do it", "doit", "send it",
-                     "sendit", "send", "send that", "go", "go ahead", "go for it",
-                     "please", "confirm", "confirmed", "y", "yes please", "mhm",
-                     "mmhm", "absolutely", "definitely", "yessir", "sounds good",
-                     "sgtm", "👍", "✅", "🆗"]
-        return words.contains { l == $0 || l.hasPrefix($0 + " ") }
-    }
-
-    private func isNegative(_ q: String) -> Bool {
-        let l = normalizeConfirm(q)
-        let words = ["no", "nope", "nah", "naw", "don't", "dont", "do not",
-                     "cancel", "stop", "nevermind", "never mind", "wait", "hold on",
-                     "n", "no thanks", "negative", "abort", "❌", "👎"]
-        return words.contains { l == $0 || l.hasPrefix($0 + " ") }
-    }
-
-    /// Lowercase and strip surrounding punctuation/whitespace so "Yes!", " ya. ",
-    /// etc. still read as a plain confirmation.
-    private func normalizeConfirm(_ q: String) -> String {
-        q.lowercased().trimmingCharacters(in: CharacterSet.alphanumerics.union(.symbols).inverted)
-    }
-
     private func formatMessages(_ msgs: [MessageItem]) -> String {
         guard !msgs.isEmpty else { return "(no recent messages found)" }
         let fmt = DateFormatter()
@@ -491,8 +500,14 @@ final class Brain: ObservableObject {
         so read what's actually there (desktop files, the open app) and target the \
         command precisely. Favor reversible, least-destructive commands: move junk \
         to the Trash (~/.Trash) instead of deleting it, never use sudo, and keep the \
-        script scoped to exactly what was asked. When the user asks you to do \
-        something, CALL THE TOOL — do it now in this same turn. Never reply with \
+        script scoped to exactly what was asked. You can also physically CLICK \
+        things you see on the screen with click_screen — a button, a checkbox, a \
+        link — by pointing at where they are in the screenshot (0–1000 on each \
+        axis, center of the target). Use it whenever the user asks you to click, \
+        press, check, or tap something on screen. And you can TYPE with type_text \
+        — click the field first if it isn't already focused, then type; set \
+        submit to press Return (to run a search or send). When the user asks you \
+        to do something, CALL THE TOOL — do it now in this same turn. Never reply with \
         "on it", "finding it", "let me look", "one sec", or any promise to follow up \
         later: you get exactly one turn, so either do the thing and report the \
         result, or ask a needed clarifying question. Nothing in between. If a request \

@@ -70,6 +70,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         brain.walkHome = { [weak self] in
             await self?.petPanel?.walkHomeAsync()
         }
+
+        // Walk over to a spot on the main display and click it for real.
+        brain.clickOnScreen = { [weak self] nx, ny in
+            guard let self, let panel = self.petPanel, ScreenClicker.isTrusted,
+                  let screen = NSScreen.screens.first(where: { $0.frame.origin == .zero })
+                    ?? NSScreen.main else { return false }
+
+            // Normalized (0…1, top-left origin) → this display's points. CGEvent
+            // and the click target share a top-left origin; only the panel's
+            // walk target needs flipping into Cocoa's bottom-left space.
+            let frame = screen.frame
+            let pointX = frame.minX + nx * frame.width
+            let topDownY = ny * frame.height           // 0 at the top of the display
+            let clickPoint = CGPoint(x: pointX, y: topDownY)
+
+            // Park Dude just above the target so he isn't standing on top of it,
+            // then let the click fall through his panel to whatever's beneath.
+            let cocoaY = frame.height - topDownY
+            let target = NSPoint(x: pointX - panel.frame.width / 2, y: cocoaY + 8)
+            await panel.walkAsync(to: target)
+            return await panel.clickThrough { await ScreenClicker.click(at: clickPoint) }
+        }
     }
 
     // MARK: - Status bar
@@ -101,8 +123,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(.separator())
         menu.addItem(withTitle: "Check for Updates…", action: #selector(checkForUpdates), keyEquivalent: "")
         menu.addItem(.separator())
-        menu.addItem(withTitle: "Quit dude", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
-        for menuItem in menu.items { menuItem.target = self }
+        let quitItem = menu.addItem(withTitle: "Quit dude", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        // Quit must target NSApp (which implements terminate(_:)); routing it to
+        // self like the other items makes AppKit's menu validation disable it,
+        // since AppDelegate doesn't respond to terminate(_:).
+        quitItem.target = NSApp
+        for menuItem in menu.items where menuItem !== quitItem { menuItem.target = self }
         item.menu = menu
         statusItem = item
     }

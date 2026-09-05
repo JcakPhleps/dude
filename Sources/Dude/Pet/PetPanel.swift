@@ -109,6 +109,15 @@ final class PetPanel: NSPanel {
         anchor = CGPoint(x: frame.maxX, y: frame.minY)
     }
 
+    /// Run `body` with the panel transparent to the mouse, so a synthetic click
+    /// Dude posts lands on whatever's underneath him instead of on his own panel.
+    func clickThrough(_ body: () async -> Bool) async -> Bool {
+        let previous = ignoresMouseEvents
+        ignoresMouseEvents = true
+        defer { ignoresMouseEvents = previous }
+        return await body()
+    }
+
     private func walk(to target: NSPoint, completion: @escaping () -> Void) {
         walkTimer?.invalidate()
         let start = frame.origin

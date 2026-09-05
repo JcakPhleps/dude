@@ -107,6 +107,47 @@ enum ActionRunner {
                 "required": ["summary", "script"],
             ],
         ],
+        [
+            "name": "click_screen",
+            "description": """
+            Physically move the mouse and click something you can SEE on the \
+            user's screen — a button, a checkbox, a link, a menu item. Give the \
+            target's location as coordinates on the screenshot you were given, on \
+            a 0–1000 scale for BOTH axes: x runs left→right (0 = far left edge, \
+            1000 = far right edge) and y runs top→bottom (0 = very top, 1000 = \
+            very bottom). Point at the CENTER of the thing to click. Only use this \
+            when the user actually asks you to click / press / check / tap \
+            something on screen.
+            """,
+            "parameters": [
+                "type": "object",
+                "properties": [
+                    "label": ["type": "string", "description": "Plain-English name of what you're clicking, e.g. \"the 'I'm not a robot' checkbox\"."],
+                    "x": ["type": "number", "description": "Horizontal position of the target's center, 0–1000, left to right."],
+                    "y": ["type": "number", "description": "Vertical position of the target's center, 0–1000, top to bottom."],
+                ],
+                "required": ["label", "x", "y"],
+            ],
+        ],
+        [
+            "name": "type_text",
+            "description": """
+            Type text into the field that's currently focused on screen — a \
+            search box, a login form, a text area. Make sure the right field is \
+            focused first: if it isn't clearly active, call click_screen on it \
+            before this. Set `submit` to true to press Return afterward (e.g. to \
+            run a search or send). Only use when the user asks you to type, enter, \
+            fill in, or search for something.
+            """,
+            "parameters": [
+                "type": "object",
+                "properties": [
+                    "text": ["type": "string", "description": "The exact text to type."],
+                    "submit": ["type": "string", "description": "'true' to press Return/Enter after typing, otherwise 'false'. Defaults to false."],
+                ],
+                "required": ["text"],
+            ],
+        ],
         ]
     }
 
@@ -150,47 +191,71 @@ enum ActionRunner {
         case done(String)           // executed; string is fed back to the model
         case staged(Pending, note: String)
         case failed(String)
+        /// The model wants Dude to walk over and click a spot on screen. `nx`/`ny`
+        /// are normalized 0…1 (left→right, top→bottom) on the captured display;
+        /// the Brain turns that into a real click. `label` is what he's clicking.
+        case click(nx: Double, ny: Double, label: String)
+        /// The model wants Dude to type into the focused field. `submit` presses
+        /// Return afterward.
+        case type(text: String, submit: Bool)
     }
 
     /// Route a model tool call to the right handler.
     static func handle(name: String, args: [String: String]) async -> Outcome {
         switch name {
         case "send_message":
-            guard let r = nonEmpty(args["recipient"]), let b = nonEmpty(args["body"]) else {
+            guard let r = ActionParsing.nonEmpty(args["recipient"]), let b = ActionParsing.nonEmpty(args["body"]) else {
                 return .failed("Missing recipient or body.")
             }
             return .staged(.message(recipient: r, body: b),
                            note: "Staged — waiting for the user to confirm before sending.")
 
         case "send_email":
-            guard let to = nonEmpty(args["to"]), let s = nonEmpty(args["subject"]), let b = nonEmpty(args["body"]) else {
+            guard let to = ActionParsing.nonEmpty(args["to"]), let s = ActionParsing.nonEmpty(args["subject"]), let b = ActionParsing.nonEmpty(args["body"]) else {
                 return .failed("Missing to, subject, or body.")
             }
             return .staged(.email(to: to, subject: s, body: b),
                            note: "Staged — waiting for the user to confirm before sending.")
 
         case "create_calendar_event":
-            guard let title = nonEmpty(args["title"]), let start = nonEmpty(args["start"]) else {
+            guard let title = ActionParsing.nonEmpty(args["title"]), let start = ActionParsing.nonEmpty(args["start"]) else {
                 return .failed("Missing title or start.")
             }
             return await createEvent(title: title, start: start, end: args["end"], notes: args["notes"])
 
         case "create_reminder":
-            guard let title = nonEmpty(args["title"]) else { return .failed("Missing title.") }
+            guard let title = ActionParsing.nonEmpty(args["title"]) else { return .failed("Missing title.") }
             return await createReminder(title: title, due: args["due"])
 
         case "control_spotify":
-            guard let command = nonEmpty(args["command"]) else { return .failed("Missing command.") }
+            guard let command = ActionParsing.nonEmpty(args["command"]) else { return .failed("Missing command.") }
             return spotify(command: command, query: args["query"])
 
         case "run_command":
-            guard let summary = nonEmpty(args["summary"]), let script = nonEmpty(args["script"]) else {
+            guard let summary = ActionParsing.nonEmpty(args["summary"]), let script = ActionParsing.nonEmpty(args["script"]) else {
                 return .failed("Missing summary or script.")
             }
-            let language = (nonEmpty(args["language"]) ?? "shell").lowercased()
+            let language = (ActionParsing.nonEmpty(args["language"]) ?? "shell").lowercased()
             return .staged(.command(summary: summary, language: language,
-                                    script: script, app: nonEmpty(args["app"])),
+                                    script: script, app: ActionParsing.nonEmpty(args["app"])),
                            note: "Staged — waiting for the user to confirm before running it.")
+
+        case "click_screen":
+            guard let label = ActionParsing.nonEmpty(args["label"]),
+                  let xRaw = ActionParsing.nonEmpty(args["x"]).flatMap(Double.init),
+                  let yRaw = ActionParsing.nonEmpty(args["y"]).flatMap(Double.init) else {
+                return .failed("Missing label or coordinates.")
+            }
+            // Model gives 0–1000 per axis; normalize to 0…1 and clamp so a stray
+            // out-of-range point can't send the click off-screen.
+            let nx = min(max(xRaw / 1000.0, 0), 1)
+            let ny = min(max(yRaw / 1000.0, 0), 1)
+            return .click(nx: nx, ny: ny, label: label)
+
+        case "type_text":
+            guard let text = ActionParsing.nonEmpty(args["text"]) else { return .failed("Nothing to type.") }
+            let submit = (args["submit"] ?? "").lowercased() == "true"
+            return .type(text: text, submit: submit)
 
         default:
             return .failed("Unknown action \(name).")
@@ -218,8 +283,8 @@ enum ActionRunner {
         let script = """
         tell application "Messages"
             set targetService to 1st account whose service type = iMessage
-            set targetBuddy to participant "\(esc(handle))" of targetService
-            send "\(esc(body))" to targetBuddy
+            set targetBuddy to participant "\(ActionParsing.esc(handle))" of targetService
+            send "\(ActionParsing.esc(body))" to targetBuddy
         end tell
         """
         if let error = runAppleScript(script) {
@@ -231,9 +296,9 @@ enum ActionRunner {
     private static func sendEmail(to: String, subject: String, body: String) -> Outcome {
         let script = """
         tell application "Mail"
-            set newMessage to make new outgoing message with properties {subject:"\(esc(subject))", content:"\(esc(body))", visible:true}
+            set newMessage to make new outgoing message with properties {subject:"\(ActionParsing.esc(subject))", content:"\(ActionParsing.esc(body))", visible:true}
             tell newMessage
-                make new to recipient at end of to recipients with properties {address:"\(esc(to))"}
+                make new to recipient at end of to recipients with properties {address:"\(ActionParsing.esc(to))"}
             end tell
             send newMessage
         end tell
@@ -255,7 +320,7 @@ enum ActionRunner {
         case "next", "skip":         action = "next track"
         case "previous", "prev", "back": action = "previous track"
         case "play_track", "play_song", "search":
-            guard let q = nonEmpty(query) else { return .failed("Nothing to play — no query given.") }
+            guard let q = ActionParsing.nonEmpty(query) else { return .failed("Nothing to play — no query given.") }
             // Open a Spotify search then start playback. (The AppleScript API
             // can only play an exact URI, so we search via the app's URL scheme.)
             if let url = URL(string: "spotify:search:\(q.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? q)") {
@@ -324,10 +389,10 @@ enum ActionRunner {
     // MARK: - Calendar / Reminders (EventKit)
 
     private static func createEvent(title: String, start: String, end: String?, notes: String?) async -> Outcome {
-        guard let startDate = parseDate(start) else {
+        guard let startDate = ActionParsing.parseDate(start) else {
             return .failed("Couldn't read the start time “\(start)”.")
         }
-        let endDate = end.flatMap(parseDate) ?? startDate.addingTimeInterval(3600)
+        let endDate = end.flatMap(ActionParsing.parseDate) ?? startDate.addingTimeInterval(3600)
 
         let store = EKEventStore()
         guard (try? await store.requestFullAccessToEvents()) == true else {
@@ -356,7 +421,7 @@ enum ActionRunner {
         let reminder = EKReminder(eventStore: store)
         reminder.title = title
         reminder.calendar = store.defaultCalendarForNewReminders()
-        if let due, let date = parseDate(due) {
+        if let due, let date = ActionParsing.parseDate(due) {
             reminder.dueDateComponents = Calendar.current.dateComponents(
                 [.year, .month, .day, .hour, .minute], from: date)
         }
@@ -398,34 +463,4 @@ enum ActionRunner {
         return (nil, result.stringValue)
     }
 
-    nonisolated private static func esc(_ s: String) -> String {
-        s.replacingOccurrences(of: "\\", with: "\\\\")
-         .replacingOccurrences(of: "\"", with: "\\\"")
-         .replacingOccurrences(of: "\n", with: "\\n")
-    }
-
-    nonisolated private static func nonEmpty(_ s: String?) -> String? {
-        guard let s = s?.trimmingCharacters(in: .whitespacesAndNewlines), !s.isEmpty else { return nil }
-        return s
-    }
-
-    /// Accept ISO-8601 (with or without seconds/zone) and a couple of plain
-    /// "yyyy-MM-dd HH:mm" shapes, interpreted in the local time zone.
-    nonisolated private static func parseDate(_ raw: String) -> Date? {
-        let s = raw.trimmingCharacters(in: .whitespaces)
-        let iso = ISO8601DateFormatter()
-        iso.formatOptions = [.withInternetDateTime]
-        if let d = iso.date(from: s) { return d }
-        iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        if let d = iso.date(from: s) { return d }
-
-        for format in ["yyyy-MM-dd'T'HH:mm:ss", "yyyy-MM-dd'T'HH:mm", "yyyy-MM-dd HH:mm", "yyyy-MM-dd"] {
-            let df = DateFormatter()
-            df.locale = Locale(identifier: "en_US_POSIX")
-            df.timeZone = .current
-            df.dateFormat = format
-            if let d = df.date(from: s) { return d }
-        }
-        return nil
-    }
 }

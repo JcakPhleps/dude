@@ -44,3 +44,35 @@ targets:
         LD_RUNPATH_SEARCH_PATHS:
           - "$(inherited)"
           - "@executable_path/../Frameworks"
+
+  # Host-less unit tests for the AI's pure logic (Gemini wire decode, query
+  # classification, confirmation parsing, action parsing). It compiles those
+  # dependency-free source files directly rather than @testable-importing the
+  # app, so it needs no GUI host — which also dodges the hardened-runtime
+  # library-validation trap you'd hit injecting an unsigned bundle into the app.
+  DudeTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: Tests/DudeTests
+      - path: Sources/Dude/Brain/GeminiProtocol.swift
+      - path: Sources/Dude/Brain/QueryClassifier.swift
+      - path: Sources/Dude/Brain/ConfirmationParser.swift
+      - path: Sources/Dude/Brain/ActionParsing.swift
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.jackphelps.dudeTests
+        GENERATE_INFOPLIST_FILE: YES
+        SWIFT_VERSION: "6.0"
+        SWIFT_STRICT_CONCURRENCY: complete
+        CODE_SIGN_IDENTITY: "-"
+        CODE_SIGN_STYLE: Manual
+
+schemes:
+  DudeTests:
+    build:
+      targets:
+        DudeTests: all
+    test:
+      targets:
+        - DudeTests

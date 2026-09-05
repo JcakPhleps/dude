@@ -8,194 +8,127 @@ import Foundation
 /// can actually *do* things (send a text, add an event, drive Spotify) instead
 /// of just describing them.
 ///
+/// The wire shapes and encode/decode live in `Gemini` (GeminiProtocol.swift);
+/// this type owns the HTTP round-trip and adds a timeout plus a short retry with
+/// backoff, since the free tier hands out transient 429/503s under load.
+///
 /// Default model is `gemini-flash-lite-latest` — the cheapest model that still
 /// does vision, and covered by the free tier. Override via config (see
 /// `Secrets.geminiModel`) for sharper answers.
 struct GeminiClient {
-    enum ClientError: LocalizedError {
-        case missingAPIKey
-        case http(status: Int, body: String)
-        case blocked(reason: String)
-        case malformedResponse
-
-        var errorDescription: String? {
-            switch self {
-            case .missingAPIKey:
-                return "No Google API key configured."
-            case .http(let status, let body):
-                return "API error \(status): \(body)"
-            case .blocked(let reason):
-                return "The request was blocked (\(reason))."
-            case .malformedResponse:
-                return "Couldn't read the model's response."
-            }
-        }
-    }
-
-    // MARK: - Conversation model (Sendable so it crosses actors cleanly)
-
-    /// One part of a turn. Covers the shapes we actually send/receive.
-    enum Part: Sendable {
-        case text(String)
-        case image(base64: String)
-        /// A tool call the model made — `argsJSON` is the raw JSON object so we
-        /// can echo it back verbatim. `id`/`thoughtSignature` come straight from
-        /// the model and MUST be echoed back (Gemini 3.x rejects the follow-up
-        /// request otherwise).
-        case functionCall(name: String, argsJSON: String, id: String?, thoughtSignature: String?)
-        /// Our reply to a tool call, fed back so the model can keep going. `id`
-        /// pairs it to the originating call.
-        case functionResponse(name: String, id: String?, result: String)
-    }
-
-    struct Turn: Sendable {
-        let role: String    // "user" or "model"
-        let parts: [Part]
-    }
-
-    struct FunctionCall: Sendable {
-        let name: String
-        let args: [String: String]
-        let argsJSON: String
-        let id: String?
-        let thoughtSignature: String?
-    }
-
-    /// What the model produced this round: some text, and/or tool calls.
-    struct ModelTurn: Sendable {
-        let text: String?
-        let calls: [FunctionCall]
-    }
+    /// Kept as a nested alias so existing call sites (and error handling that
+    /// switches on it) don't need to change.
+    typealias ClientError = Gemini.WireError
 
     private static let base = "https://generativelanguage.googleapis.com/v1beta/models"
+
+    /// Per-request ceiling. A hung request would otherwise strand Dude in the
+    /// "thinking" pose forever, since the caller keeps `isBusy` until we return.
+    private let timeout: TimeInterval = 45
+
+    /// Total attempts (1 try + retries) for transient failures.
+    private let maxAttempts = 3
 
     // MARK: - Public API
 
     /// Simple one-shot text ask (used by the background Observer). No tools.
     func ask(system: String, question: String, imageBase64: String?) async throws -> String {
-        var parts: [Part] = []
+        var parts: [Gemini.Part] = []
         if let imageBase64 { parts.append(.image(base64: imageBase64)) }
         parts.append(.text(question))
-        let turn = try await generate(system: system, history: [Turn(role: "user", parts: parts)], useTools: false)
+        let turn = try await generate(system: system, history: [.init(role: "user", parts: parts)], useTools: false)
         return turn.text ?? ""
     }
 
     /// Full turn: send the running `history`, optionally advertising Dude's
     /// tools, and get back text and/or the tool calls the model wants to make.
-    func generate(system: String, history: [Turn], useTools: Bool) async throws -> ModelTurn {
+    func generate(system: String, history: [Gemini.Turn], useTools: Bool) async throws -> Gemini.ModelTurn {
         guard let key = Secrets.googleAPIKey else { throw ClientError.missingAPIKey }
+
+        let model = Secrets.geminiModel
+        // A bad `gemini_model` in config (spaces, junk) used to crash on a
+        // force-unwrapped URL. Validate and fail soft instead.
+        guard
+            let encodedModel = model.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed),
+            let url = URL(string: "\(Self.base)/\(encodedModel):generateContent")
+        else {
+            throw ClientError.badModel(model)
+        }
 
         var body: [String: Any] = [
             "system_instruction": ["parts": [["text": system]]],
-            "contents": history.map(Self.encode),
+            "contents": history.map(Gemini.encode),
             "generationConfig": ["maxOutputTokens": 1024],
         ]
         if useTools {
             body["tools"] = [["function_declarations": ActionRunner.functionDeclarations()]]
         }
 
-        let model = Secrets.geminiModel
-        let url = URL(string: "\(Self.base)/\(model):generateContent")!
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
+        request.timeoutInterval = timeout
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue(key, forHTTPHeaderField: "x-goog-api-key")
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
-        let (data, response) = try await URLSession.shared.data(for: request)
-        guard let http = response as? HTTPURLResponse else { throw ClientError.malformedResponse }
-        guard (200..<300).contains(http.statusCode) else {
-            throw ClientError.http(status: http.statusCode, body: String(data: data, encoding: .utf8) ?? "<no body>")
-        }
-        return try Self.parseTurn(from: data)
+        return try await send(request)
     }
 
-    // MARK: - Encoding
+    // MARK: - Transport (timeout + retry with backoff)
 
-    private static func encode(_ turn: Turn) -> [String: Any] {
-        var parts: [[String: Any]] = []
-        for part in turn.parts {
-            switch part {
-            case .text(let t):
-                parts.append(["text": t])
-            case .image(let b64):
-                parts.append(["inline_data": ["mime_type": "image/jpeg", "data": b64]])
-            case .functionCall(let name, let argsJSON, let id, let thoughtSignature):
-                let args = (try? JSONSerialization.jsonObject(with: Data(argsJSON.utf8))) ?? [:]
-                var call: [String: Any] = ["name": name, "args": args]
-                if let id { call["id"] = id }
-                var part: [String: Any] = ["functionCall": call]
-                if let thoughtSignature { part["thoughtSignature"] = thoughtSignature }
-                parts.append(part)
-            case .functionResponse(let name, let id, let result):
-                var fr: [String: Any] = ["name": name, "response": ["result": result]]
-                if let id { fr["id"] = id }
-                parts.append(["functionResponse": fr])
+    /// Fire the request, retrying a few times on transient failures (rate limits,
+    /// 5xx, dropped connections) with a short exponential backoff. Non-transient
+    /// errors (bad key, safety block, malformed) fail fast — retrying won't help.
+    private func send(_ request: URLRequest) async throws -> Gemini.ModelTurn {
+        var lastError: Error = ClientError.malformedResponse
+
+        for attempt in 0..<maxAttempts {
+            if attempt > 0 {
+                // 0.6s, then 1.8s — enough to ride out a brief overload without
+                // making the user wait ages.
+                let backoff = UInt64(0.6 * pow(3.0, Double(attempt - 1)) * 1_000_000_000)
+                try? await Task.sleep(nanoseconds: backoff)
+            }
+
+            do {
+                let (data, response) = try await URLSession.shared.data(for: request)
+                guard let http = response as? HTTPURLResponse else {
+                    throw ClientError.malformedResponse
+                }
+                guard (200..<300).contains(http.statusCode) else {
+                    let bodyText = String(data: data, encoding: .utf8) ?? "<no body>"
+                    let error = ClientError.http(status: http.statusCode, body: bodyText)
+                    if Gemini.isRetryable(status: http.statusCode) {
+                        lastError = error
+                        continue
+                    }
+                    throw error
+                }
+                return try Gemini.decode(data)
+            } catch let error as ClientError {
+                // Our own decoded errors are terminal — don't burn retries on them.
+                throw error
+            } catch {
+                // URLSession threw (timeout, connection lost, offline). These are
+                // worth another shot.
+                lastError = error
+                if !Self.isTransientTransportError(error) { throw error }
             }
         }
-        return ["role": turn.role, "parts": parts]
+        throw lastError
     }
 
-    // MARK: - Decoding
-
-    private static func parseTurn(from data: Data) throws -> ModelTurn {
-        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            throw ClientError.malformedResponse
+    /// Network-level errors that a retry might clear (as opposed to, say, a bad
+    /// URL, which won't).
+    private static func isTransientTransportError(_ error: Error) -> Bool {
+        guard let urlError = error as? URLError else { return false }
+        switch urlError.code {
+        case .timedOut, .networkConnectionLost, .cannotConnectToHost,
+             .dnsLookupFailed, .notConnectedToInternet, .cannotFindHost,
+             .resourceUnavailable, .badServerResponse:
+            return true
+        default:
+            return false
         }
-
-        // A safety/policy block comes back with no candidates and a reason.
-        if let feedback = json["promptFeedback"] as? [String: Any],
-           let reason = feedback["blockReason"] as? String {
-            throw ClientError.blocked(reason: reason)
-        }
-
-        guard
-            let candidates = json["candidates"] as? [[String: Any]],
-            let first = candidates.first,
-            let content = first["content"] as? [String: Any],
-            let parts = content["parts"] as? [[String: Any]]
-        else {
-            throw ClientError.malformedResponse
-        }
-
-        var textChunks: [String] = []
-        var calls: [FunctionCall] = []
-        for part in parts {
-            if let text = part["text"] as? String {
-                textChunks.append(text)
-            }
-            if let call = part["functionCall"] as? [String: Any],
-               let name = call["name"] as? String {
-                let argsObj = call["args"] as? [String: Any] ?? [:]
-                let argsJSON = (try? JSONSerialization.data(withJSONObject: argsObj))
-                    .flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
-                calls.append(FunctionCall(
-                    name: name,
-                    args: stringify(argsObj),
-                    argsJSON: argsJSON,
-                    id: call["id"] as? String,
-                    thoughtSignature: part["thoughtSignature"] as? String
-                ))
-            }
-        }
-
-        let text = textChunks.joined().trimmingCharacters(in: .whitespacesAndNewlines)
-        if text.isEmpty && calls.isEmpty {
-            throw ClientError.malformedResponse
-        }
-        return ModelTurn(text: text.isEmpty ? nil : text, calls: calls)
-    }
-
-    /// Flatten a JSON args object to `[String: String]` (all our tool params are
-    /// scalar strings; coerce anything else to its string form).
-    private static func stringify(_ obj: [String: Any]) -> [String: String] {
-        var out: [String: String] = [:]
-        for (k, v) in obj {
-            if let s = v as? String { out[k] = s }
-            else if let n = v as? NSNumber { out[k] = n.stringValue }
-            else if let b = v as? Bool { out[k] = b ? "true" : "false" }
-            else { out[k] = String(describing: v) }
-        }
-        return out
     }
 }

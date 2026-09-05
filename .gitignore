@@ -12,3 +12,6 @@ xcuserdata/
 # Local secrets — never commit
 .dude/
 config.json
+
+# stray macOS text clippings
+*.textClipping
