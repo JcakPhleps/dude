@@ -35,6 +35,8 @@ struct MascotView: View {
             return Sprites.walk[tick % Sprites.walk.count]
         case .atLaptop:
             return Sprites.laptop[tick % Sprites.laptop.count]
+        case .celebrating:
+            return Sprites.celebrate[tick % Sprites.celebrate.count]
         case .working:
             return Sprites.working[tick % Sprites.working.count]
         case .listening:
@@ -54,6 +56,8 @@ struct MascotView: View {
 
     private var bobOffset: CGFloat {
         switch brain.mood {
+        case .celebrating:
+            return tick.isMultiple(of: 2) ? -7 : 3   // big excited hop
         case .dancing:
             return tick.isMultiple(of: 2) ? -4 : 4
         case .walking:

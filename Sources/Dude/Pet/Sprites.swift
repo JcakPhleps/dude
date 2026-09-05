@@ -404,6 +404,48 @@ enum Sprites {
     ]
     static let think = [thinkA, thinkB, thinkC]
 
+    // Victory! Both fists thrown up beside his head, mouth open in a grin —
+    // cycled fast with a big hop for a triumphant fist-pump (e.g. right after
+    // he beats an "I'm not a robot" checkbox). celebrateB tucks his legs up as
+    // if mid-jump.
+    static let celebrateA = [
+        "...K........K...",
+        "...K.KKKKKK.K...",
+        "...KKWWWWWWKK...",
+        "...KKWEWWEWKK...",
+        "...KKWWKKWWKK...",
+        ".....KKKKKK.....",
+        ".....KKKKKK.....",
+        ".....K.KK.K.....",
+        ".....K.KK.K.....",
+        ".......KK.......",
+        ".......KK.......",
+        "......K..K......",
+        ".....K....K.....",
+        ".....K....K.....",
+        "................",
+        "................",
+    ]
+    static let celebrateB = [
+        "...K........K...",
+        "...K.KKKKKK.K...",
+        "...KKWWWWWWKK...",
+        "...KKWEWWEWKK...",
+        "...KKWWKKWWKK...",
+        ".....KKKKKK.....",
+        ".....KKKKKK.....",
+        ".....K.KK.K.....",
+        ".......KK.......",
+        ".......KK.......",
+        "......K..K......",
+        "......K..K......",
+        "................",
+        "................",
+        "................",
+        "................",
+    ]
+    static let celebrate = [celebrateA, celebrateB]
+
     // Mouth open — cycled with idleA while Dude is "speaking".
     static let talk = [
         "................",

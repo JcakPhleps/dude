@@ -15,6 +15,7 @@ final class Brain: ObservableObject {
         case voice       // voice mode — holding the mic, hearing you out
         case walking     // strolling across the screen to an app's Dock icon
         case atLaptop    // crouched at the app with his laptop out, doing the thing
+        case celebrating // fists up, hopping — just pulled something off
     }
 
     /// Set by the app so Dude can physically walk to a named app's Dock icon
@@ -302,9 +303,17 @@ final class Brain: ObservableObject {
         if ok {
             mood = .atLaptop
             await walkHome?()
+            await celebrate()          // arms up — he beat the machine
         }
         mood = .thinking
         return ok
+    }
+
+    /// A brief triumphant fist-pump. Used after Dude pulls off a click (chef's
+    /// kiss on defying an "I'm not a robot" box).
+    private func celebrate() async {
+        mood = .celebrating
+        try? await Task.sleep(nanoseconds: 1_600_000_000)
     }
 
     /// Type into whatever field is focused. No walking — he types wherever the
