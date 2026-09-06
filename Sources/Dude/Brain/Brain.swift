@@ -30,8 +30,15 @@ final class Brain: ObservableObject {
     var clickOnScreen: ((_ nx: Double, _ ny: Double) async -> Bool)?
 
     @Published var mood: Mood = .idle
-    @Published var latestReply: String = ""
+    @Published var latestReply: String = "" {
+        didSet { scheduleAutoDismiss() }
+    }
     @Published var isBusy = false
+
+    /// Clears a bubble that's been sitting on screen untouched too long.
+    private var dismissTask: Task<Void, Never>?
+    /// How long a message lingers before Dude drops it on his own.
+    private let autoDismissAfter: UInt64 = 120 * 1_000_000_000   // 2 minutes
 
     /// True while Dude has a staged action waiting on a yes/no. The UI watches
     /// this to show a "(y / n)" hint and to route bare y/n keypresses.
@@ -351,6 +358,31 @@ final class Brain: ObservableObject {
     func clearMessages() {
         messageQueue.removeAll()
         latestReply = ""
+    }
+
+    /// Restart the linger timer whenever the bubble's contents change. Once a
+    /// message has sat untouched for `autoDismissAfter`, Dude clears it himself
+    /// so nothing hangs over the desktop indefinitely. Emptying the bubble just
+    /// cancels the timer.
+    private func scheduleAutoDismiss() {
+        dismissTask?.cancel()
+        dismissTask = nil
+        guard !latestReply.isEmpty else { return }
+        dismissTask = Task { [weak self] in
+            guard let after = self?.autoDismissAfter else { return }
+            try? await Task.sleep(nanoseconds: after)
+            guard !Task.isCancelled else { return }
+            self?.autoDismiss()
+        }
+    }
+
+    /// Time's up: quietly take the bubble down. Also drop any staged action, so
+    /// we never leave a send/command pending with no visible prompt.
+    private func autoDismiss() {
+        guard !latestReply.isEmpty else { return }
+        pendingAction = nil
+        clearMessages()
+        settle()
     }
 
     private func enqueue(_ messages: [String]) {
