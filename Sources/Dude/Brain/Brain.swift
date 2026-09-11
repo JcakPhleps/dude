@@ -61,8 +61,10 @@ final class Brain: ObservableObject {
     /// a second one.
     private var speaking = false
 
-    /// Cap on model↔tool round-trips per ask, so a confused loop can't spin.
-    private let maxToolRounds = 5
+    /// Cap on model↔tool round-trips per ask. Generous so he can actually see a
+    /// multi-step task through — click, look at the result, adjust, type, verify,
+    /// keep going — but still bounded so a confused loop can't spin forever.
+    private let maxToolRounds = 12
 
     init(memory: MemoryStore) {
         self.memory = memory
@@ -178,7 +180,11 @@ final class Brain: ObservableObject {
         for _ in 0..<maxToolRounds {
             let turn: Gemini.ModelTurn
             do {
-                turn = try await client.generate(system: system, history: history, useTools: true)
+                // Prune to the freshest screenshot so the token bill stays flat
+                // as the loop grows; give thinking + reply plenty of headroom.
+                turn = try await client.generate(system: system,
+                                                 history: prunedForVision(history),
+                                                 useTools: true, maxOutputTokens: 4096)
             } catch {
                 show("Hmm, I couldn't reach my brain: \(error.localizedDescription)", mood: .stumped)
                 return
@@ -204,6 +210,7 @@ final class Brain: ObservableObject {
             }))
 
             var responses: [Gemini.Part] = []
+            var didTouchScreen = false
             for call in turn.calls {
                 let outcome = await ActionRunner.handle(name: call.name, args: call.args)
                 let result: String
@@ -219,6 +226,7 @@ final class Brain: ObservableObject {
                 case .click(let nx, let ny, let label):
                     let ok = await performClick(nx: nx, ny: ny)
                     if ok {
+                        didTouchScreen = true
                         memory.record("Clicked: \(label)")
                         result = "Clicked \(label)."
                     } else {
@@ -227,6 +235,7 @@ final class Brain: ObservableObject {
                 case .type(let text, let submit):
                     let ok = await performType(text, submit: submit)
                     if ok {
+                        didTouchScreen = true
                         memory.record("Typed: \(text.prefix(80))")
                         result = "Typed “\(text)”\(submit ? " and pressed Return." : ".")"
                     } else {
@@ -235,11 +244,34 @@ final class Brain: ObservableObject {
                 }
                 responses.append(.functionResponse(name: call.name, id: call.id, result: result))
             }
-            history.append(.init(role: "user", parts: responses))
+
+            // After he touches the screen, hand him a fresh look so he can VERIFY
+            // it landed and self-correct (re-aim a missed click, retype, move on)
+            // instead of acting blind. This is what makes him autonomous.
+            var followParts: [Gemini.Part] = responses
+            if didTouchScreen, let fresh = try? await ScreenCapture.captureMainDisplay() {
+                followParts.append(.text("Here's the screen right after those actions. Check whether each one actually worked — if something didn't land (a click missed, a field is empty, nothing changed), fix it and try again. Keep going until the task is truly done, then tell me."))
+                followParts.append(.image(base64: fresh.jpegBase64))
+            }
+            history.append(.init(role: "user", parts: followParts))
         }
 
         // Ran out of rounds without a plain-text reply.
         say(pendingAction?.confirmationPrompt ?? "Okay, handled what I could.")
+    }
+
+    /// Keep only the most recent screenshot in the history and strip images from
+    /// every earlier turn. As the see→act→verify loop grows, this holds the
+    /// per-request token cost roughly flat (one image, not N) — keeping him cheap
+    /// on the free tier — while he always reasons over the latest view.
+    private func prunedForVision(_ history: [Gemini.Turn]) -> [Gemini.Turn] {
+        let isImage: (Gemini.Part) -> Bool = { if case .image = $0 { return true } else { return false } }
+        guard let keep = history.lastIndex(where: { $0.parts.contains(where: isImage) }) else { return history }
+        return history.enumerated().map { index, turn in
+            guard index != keep else { return turn }
+            let parts = turn.parts.filter { !isImage($0) }
+            return Gemini.Turn(role: turn.role, parts: parts)
+        }
     }
 
     // MARK: - Confirming a staged action
@@ -562,6 +594,20 @@ final class Brain: ObservableObject {
         message, sent an email, ran a command, or did anything unless you actually \
         called the tool for it in this conversation and it reported success — if you \
         haven't, don't say you did.
+
+        How you work — be genuinely autonomous. Think a step ahead, then break the \
+        goal into steps and carry them out yourself. Don't narrate every move or ask \
+        permission for ordinary on-screen actions (clicking, typing, scrolling, \
+        searching) — just do them. After you click or type you'll be handed a fresh \
+        screenshot: actually LOOK at it and check your own work — did the click land, \
+        did the field fill in, did the page change the way you expected? If something \
+        missed (a click was off, a box is still empty, nothing happened), fix it and \
+        try again — re-aim by a few points and click once more, retype, take a \
+        different route — instead of giving up or pretending it worked. You can chain \
+        as many steps as it takes; keep going until the task is genuinely finished, \
+        and only then give one short final reply. Be decisive: default to doing, not \
+        asking. Save questions for when you truly can't proceed without something only \
+        the user has (a password, a personal choice) — then ask plainly, in one line.
 
         What you know about the user:
         \(memory.profile.briefing)

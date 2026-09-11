@@ -12,9 +12,16 @@ import Foundation
 /// this type owns the HTTP round-trip and adds a timeout plus a short retry with
 /// backoff, since the free tier hands out transient 429/503s under load.
 ///
-/// Default model is `gemini-flash-lite-latest` — the cheapest model that still
-/// does vision, and covered by the free tier. Override via config (see
-/// `Secrets.geminiModel`) for sharper answers.
+/// Default model is `gemini-flash-latest` (Gemini 3 Flash) — the smartest model
+/// still on the free tier; it reasons dynamically and does vision. Override via
+/// config (see `Secrets.geminiModel`), e.g. `gemini-flash-lite-latest` for lower
+/// latency.
+///
+/// Because the default model *thinks* before answering, requests need generous
+/// `maxOutputTokens` headroom: thinking tokens draw from the same budget, so too
+/// small a cap can be spent entirely on reasoning, leaving an empty reply. Hence
+/// the per-call `maxOutputTokens` argument (big for the agentic loop, modest for
+/// the observer's one-liner).
 struct GeminiClient {
     /// Kept as a nested alias so existing call sites (and error handling that
     /// switches on it) don't need to change.
@@ -32,17 +39,23 @@ struct GeminiClient {
     // MARK: - Public API
 
     /// Simple one-shot text ask (used by the background Observer). No tools.
+    /// A modest output budget — enough for a short reply plus the model's own
+    /// thinking — keeps this cheap on the free tier.
     func ask(system: String, question: String, imageBase64: String?) async throws -> String {
         var parts: [Gemini.Part] = []
         if let imageBase64 { parts.append(.image(base64: imageBase64)) }
         parts.append(.text(question))
-        let turn = try await generate(system: system, history: [.init(role: "user", parts: parts)], useTools: false)
+        let turn = try await generate(system: system, history: [.init(role: "user", parts: parts)],
+                                      useTools: false, maxOutputTokens: 1024)
         return turn.text ?? ""
     }
 
     /// Full turn: send the running `history`, optionally advertising Dude's
     /// tools, and get back text and/or the tool calls the model wants to make.
-    func generate(system: String, history: [Gemini.Turn], useTools: Bool) async throws -> Gemini.ModelTurn {
+    /// `maxOutputTokens` must leave room for the model's thinking as well as the
+    /// visible answer (see the type doc).
+    func generate(system: String, history: [Gemini.Turn], useTools: Bool,
+                  maxOutputTokens: Int = 2048) async throws -> Gemini.ModelTurn {
         guard let key = Secrets.googleAPIKey else { throw ClientError.missingAPIKey }
 
         let model = Secrets.geminiModel
@@ -58,7 +71,7 @@ struct GeminiClient {
         var body: [String: Any] = [
             "system_instruction": ["parts": [["text": system]]],
             "contents": history.map(Gemini.encode),
-            "generationConfig": ["maxOutputTokens": 1024],
+            "generationConfig": ["maxOutputTokens": maxOutputTokens],
         ]
         if useTools {
             body["tools"] = [["function_declarations": ActionRunner.functionDeclarations()]]

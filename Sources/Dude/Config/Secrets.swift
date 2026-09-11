@@ -12,11 +12,14 @@ import Foundation
 /// When no key is found, Dude runs in "stub" mode: the app is fully usable and
 /// explains that it needs a key to actually see your screen and answer.
 enum Secrets {
-    /// Default model: cheapest tier that still does vision, and on the free
-    /// tier. The `-latest` alias tracks the current flash-lite so a pinned
-    /// model can't get retired out from under us. Override in config.json with
-    /// `"gemini_model": "gemini-flash-latest"` for sharper answers.
-    static let defaultGeminiModel = "gemini-flash-lite-latest"
+    /// Default model: the smartest model still on Google's **free** tier —
+    /// Gemini Flash (currently Gemini 3 Flash), which reasons ("thinks")
+    /// dynamically and does vision. The `-latest` alias tracks the current
+    /// Flash so a pinned model can't get retired out from under us. Free-tier
+    /// limits (~1,500 requests/day) are plenty for a desktop buddy. For lower
+    /// latency / even less quota, set `"gemini_model": "gemini-flash-lite-latest"`
+    /// in config.json.
+    static let defaultGeminiModel = "gemini-flash-latest"
 
     static var googleAPIKey: String? {
         let env = ProcessInfo.processInfo.environment
