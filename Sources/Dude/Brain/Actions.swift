@@ -15,6 +15,9 @@ import Foundation
 @MainActor
 enum ActionRunner {
 
+    /// Shown when a screen-control action needs the Accessibility grant.
+    static let accessibilityHint = "I need Accessibility turned on for Dude in System Settings ▸ Privacy & Security ▸ Accessibility (the same one that lets me walk to apps)."
+
     // MARK: - Tool schema handed to Gemini
 
     /// Gemini `functionDeclarations`. Kept flat (string args only) so the
@@ -148,6 +151,43 @@ enum ActionRunner {
                 "required": ["text"],
             ],
         ],
+        [
+            "name": "scroll",
+            "description": """
+            Scroll the screen to reveal something that's off-screen — read \
+            further down a page, bring a button into view, scroll a list or \
+            panel. `direction` is up, down, left, or right. `amount` is roughly \
+            how far: 'small' (a nudge), 'medium' (default), or 'large' (about a \
+            page). It scrolls wherever the pointer is, so if you need a specific \
+            area, click into it first.
+            """,
+            "parameters": [
+                "type": "object",
+                "properties": [
+                    "direction": ["type": "string", "description": "up | down | left | right"],
+                    "amount": ["type": "string", "description": "small | medium | large. Defaults to medium."],
+                ],
+                "required": ["direction"],
+            ],
+        ],
+        [
+            "name": "press_keys",
+            "description": """
+            Press a key or keyboard shortcut — often faster and surer than \
+            clicking. Examples: 'return' (submit), 'escape' (dismiss), 'tab' \
+            (next field), 'down'/'up'/'pageup'/'pagedown' (navigate), or a chord \
+            like 'cmd+l' (focus a browser's address bar), 'cmd+t' (new tab), \
+            'cmd+a' (select all), 'cmd+c' / 'cmd+v' (copy/paste), 'cmd+shift+t'. \
+            Combine modifiers (cmd, shift, opt, ctrl) with '+'; one press per call.
+            """,
+            "parameters": [
+                "type": "object",
+                "properties": [
+                    "keys": ["type": "string", "description": "The key or chord, e.g. 'return', 'cmd+l', 'cmd+shift+t'."],
+                ],
+                "required": ["keys"],
+            ],
+        ],
         ]
     }
 
@@ -256,6 +296,32 @@ enum ActionRunner {
             guard let text = ActionParsing.nonEmpty(args["text"]) else { return .failed("Nothing to type.") }
             let submit = (args["submit"] ?? "").lowercased() == "true"
             return .type(text: text, submit: submit)
+
+        case "scroll":
+            guard let dir = ActionParsing.nonEmpty(args["direction"])?.lowercased() else {
+                return .failed("Missing direction.")
+            }
+            let amount = (args["amount"] ?? "medium").lowercased()
+            let lines = amount.contains("large") ? 24 : amount.contains("small") ? 4 : 12
+            var vertical = 0, horizontal = 0
+            switch dir {
+            case "down":  vertical = -lines
+            case "up":    vertical = lines
+            case "left":  horizontal = lines
+            case "right": horizontal = -lines
+            default: return .failed("Unknown scroll direction “\(dir)”.")
+            }
+            guard await ScreenClicker.scroll(vertical: vertical, horizontal: horizontal) else {
+                return .failed(accessibilityHint)
+            }
+            return .done("Scrolled \(dir).")
+
+        case "press_keys":
+            guard let keys = ActionParsing.nonEmpty(args["keys"]) else { return .failed("No keys given.") }
+            guard await ScreenClicker.pressKeys(keys) else {
+                return .failed("Couldn't press “\(keys)” — \(accessibilityHint)")
+            }
+            return .done("Pressed \(keys).")
 
         default:
             return .failed("Unknown action \(name).")

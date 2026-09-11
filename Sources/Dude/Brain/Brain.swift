@@ -184,7 +184,8 @@ final class Brain: ObservableObject {
                 // as the loop grows; give thinking + reply plenty of headroom.
                 turn = try await client.generate(system: system,
                                                  history: prunedForVision(history),
-                                                 useTools: true, maxOutputTokens: 4096)
+                                                 useTools: true, maxOutputTokens: 4096,
+                                                 thinkingLevel: "high")
             } catch {
                 show("Hmm, I couldn't reach my brain: \(error.localizedDescription)", mood: .stumped)
                 return
@@ -241,6 +242,11 @@ final class Brain: ObservableObject {
                     } else {
                         result = "FAILED: \(accessibilityHint)"
                     }
+                }
+                // Scroll / key presses change the screen too, so they also
+                // earn a fresh look for verification.
+                if (call.name == "scroll" || call.name == "press_keys"), !result.hasPrefix("FAILED") {
+                    didTouchScreen = true
                 }
                 responses.append(.functionResponse(name: call.name, id: call.id, result: result))
             }
@@ -579,8 +585,13 @@ final class Brain: ObservableObject {
         axis, center of the target). Use it whenever the user asks you to click, \
         press, check, or tap something on screen. And you can TYPE with type_text \
         — click the field first if it isn't already focused, then type; set \
-        submit to press Return (to run a search or send). When the user asks you \
-        to do something, CALL THE TOOL — do it now in this same turn. Never reply with \
+        submit to press Return (to run a search or send). You can SCROLL the \
+        screen (scroll) to bring off-screen things into view, and press keys or \
+        shortcuts (press_keys) like return, escape, tab, arrows, or chords such \
+        as cmd+l / cmd+t / cmd+a — often faster and surer than hunting for a \
+        button. Between click, type, scroll and press_keys you can operate the \
+        machine like a person would. When the user asks you to do something, \
+        CALL THE TOOL — do it now in this same turn. Never reply with \
         "on it", "finding it", "let me look", "one sec", or any promise to follow up \
         later: you get exactly one turn, so either do the thing and report the \
         result, or ask a needed clarifying question. Nothing in between. If a request \

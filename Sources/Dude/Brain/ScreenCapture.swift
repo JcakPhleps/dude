@@ -25,9 +25,11 @@ enum ScreenCapture {
         let signature: [UInt8]
     }
 
-    /// Longest edge of the downsampled capture. Vision quality stays high well
-    /// below native resolution, and smaller images cost far fewer tokens.
-    static let maxEdge = 1400
+    /// Longest edge of the downsampled capture. A touch higher than strictly
+    /// needed for reading, to sharpen small on-screen targets (checkboxes, tiny
+    /// buttons) so grounding a click is more accurate — still cheap since the
+    /// agent loop only ever keeps one screenshot in context at a time.
+    static let maxEdge = 1600
 
     static func captureMainDisplay() async throws -> Shot {
         // ScreenCaptureKit hands back an all-black frame (rather than throwing)

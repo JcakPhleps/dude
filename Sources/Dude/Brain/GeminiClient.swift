@@ -45,17 +45,21 @@ struct GeminiClient {
         var parts: [Gemini.Part] = []
         if let imageBase64 { parts.append(.image(base64: imageBase64)) }
         parts.append(.text(question))
+        // The observer only classifies a screenshot into two lines — cheap,
+        // fast, low thinking.
         let turn = try await generate(system: system, history: [.init(role: "user", parts: parts)],
-                                      useTools: false, maxOutputTokens: 1024)
+                                      useTools: false, maxOutputTokens: 1024, thinkingLevel: "low")
         return turn.text ?? ""
     }
 
     /// Full turn: send the running `history`, optionally advertising Dude's
     /// tools, and get back text and/or the tool calls the model wants to make.
     /// `maxOutputTokens` must leave room for the model's thinking as well as the
-    /// visible answer (see the type doc).
+    /// visible answer (see the type doc). `thinkingLevel` ("low"/"high") tunes how
+    /// hard the model reasons — high for the agent loop, low for cheap classifying;
+    /// it's only sent for models that support it, so pinning an older model is safe.
     func generate(system: String, history: [Gemini.Turn], useTools: Bool,
-                  maxOutputTokens: Int = 2048) async throws -> Gemini.ModelTurn {
+                  maxOutputTokens: Int = 2048, thinkingLevel: String? = nil) async throws -> Gemini.ModelTurn {
         guard let key = Secrets.googleAPIKey else { throw ClientError.missingAPIKey }
 
         let model = Secrets.geminiModel
@@ -68,10 +72,18 @@ struct GeminiClient {
             throw ClientError.badModel(model)
         }
 
+        var generationConfig: [String: Any] = ["maxOutputTokens": maxOutputTokens]
+        // `thinkingLevel` is a Gemini 3.x knob; only send it for models that take
+        // it (the default and the `-latest` aliases) so a pinned 2.x model can't
+        // 400 on an unknown field.
+        if let thinkingLevel, Self.supportsThinkingLevel(model) {
+            generationConfig["thinkingConfig"] = ["thinkingLevel": thinkingLevel]
+        }
+
         var body: [String: Any] = [
             "system_instruction": ["parts": [["text": system]]],
             "contents": history.map(Gemini.encode),
-            "generationConfig": ["maxOutputTokens": maxOutputTokens],
+            "generationConfig": generationConfig,
         ]
         if useTools {
             body["tools"] = [["function_declarations": ActionRunner.functionDeclarations()]]
@@ -85,6 +97,13 @@ struct GeminiClient {
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
         return try await send(request)
+    }
+
+    /// Whether `model` accepts a `thinkingConfig.thinkingLevel` (the Gemini 3.x
+    /// family, including the `-latest` aliases we default to).
+    private static func supportsThinkingLevel(_ model: String) -> Bool {
+        let m = model.lowercased()
+        return m.contains("-latest") || m.contains("gemini-3") || m.contains("flash-latest")
     }
 
     // MARK: - Transport (timeout + retry with backoff)

@@ -111,4 +111,82 @@ enum ScreenClicker {
         down.post(tap: .cghidEventTap)
         up.post(tap: .cghidEventTap)
     }
+
+    // MARK: - Scrolling
+
+    /// Scroll wherever the pointer currently sits. `vertical` > 0 scrolls up,
+    /// `horizontal` > 0 scrolls left; magnitudes are line counts. Delivered in a
+    /// few small steps so it glides rather than jumping. Needs Accessibility.
+    @discardableResult
+    static func scroll(vertical: Int, horizontal: Int) async -> Bool {
+        guard isTrusted else { return false }
+        let source = CGEventSource(stateID: .combinedSessionState)
+        let steps = 6
+        let stepV = Int32(vertical / steps), stepH = Int32(horizontal / steps)
+        guard stepV != 0 || stepH != 0 else { return true }
+        for _ in 0..<steps {
+            if let event = CGEvent(scrollWheelEvent2Source: source, units: .line,
+                                   wheelCount: 2, wheel1: stepV, wheel2: stepH, wheel3: 0) {
+                event.post(tap: .cghidEventTap)
+            }
+            try? await Task.sleep(nanoseconds: 22_000_000)
+        }
+        return true
+    }
+
+    // MARK: - Keyboard shortcuts
+
+    /// Press a single key or a modifier chord like `cmd+l`, `cmd+shift+t`,
+    /// `escape`, `tab`, `down`, `pageup`. Combine modifiers with `+`; the final
+    /// token is the key. Returns false if Accessibility is off or the key name
+    /// isn't recognized.
+    @discardableResult
+    static func pressKeys(_ combo: String) async -> Bool {
+        guard isTrusted else { return false }
+        let tokens = combo.lowercased().split(separator: "+").map { $0.trimmingCharacters(in: .whitespaces) }
+        guard let keyName = tokens.last, let code = keyCode(for: keyName) else { return false }
+
+        var flags: CGEventFlags = []
+        for modifier in tokens.dropLast() {
+            switch modifier {
+            case "cmd", "command", "⌘": flags.insert(.maskCommand)
+            case "shift", "⇧":          flags.insert(.maskShift)
+            case "opt", "option", "alt", "⌥": flags.insert(.maskAlternate)
+            case "ctrl", "control", "⌃": flags.insert(.maskControl)
+            default: break
+            }
+        }
+
+        let source = CGEventSource(stateID: .combinedSessionState)
+        guard let down = CGEvent(keyboardEventSource: source, virtualKey: code, keyDown: true),
+              let up = CGEvent(keyboardEventSource: source, virtualKey: code, keyDown: false) else { return false }
+        down.flags = flags
+        up.flags = flags
+        down.post(tap: .cghidEventTap)
+        try? await Task.sleep(nanoseconds: 45_000_000)
+        up.post(tap: .cghidEventTap)
+        return true
+    }
+
+    /// Map a key name to its US-ANSI virtual keycode. Covers letters, digits,
+    /// and the navigation/editing keys an agent actually reaches for.
+    private static func keyCode(for name: String) -> CGKeyCode? {
+        let named: [String: CGKeyCode] = [
+            "return": 36, "enter": 36, "tab": 48, "space": 49, "spacebar": 49,
+            "delete": 51, "backspace": 51, "forwarddelete": 117,
+            "escape": 53, "esc": 53,
+            "left": 123, "right": 124, "down": 125, "up": 126,
+            "home": 115, "end": 119, "pageup": 116, "pagedown": 121,
+            "comma": 43, "period": 47, "slash": 44, "minus": 27, "equal": 24,
+            "semicolon": 41, "quote": 39, "leftbracket": 33, "rightbracket": 30,
+            "backslash": 42, "grave": 50, "backtick": 50,
+            "a": 0, "b": 11, "c": 8, "d": 2, "e": 14, "f": 3, "g": 5, "h": 4,
+            "i": 34, "j": 38, "k": 40, "l": 37, "m": 46, "n": 45, "o": 31, "p": 35,
+            "q": 12, "r": 15, "s": 1, "t": 17, "u": 32, "v": 9, "w": 13, "x": 7,
+            "y": 16, "z": 6,
+            "0": 29, "1": 18, "2": 19, "3": 20, "4": 21, "5": 23, "6": 22,
+            "7": 26, "8": 28, "9": 25,
+        ]
+        return named[name]
+    }
 }
