@@ -59,6 +59,7 @@ targets:
       - path: Sources/Dude/Brain/QueryClassifier.swift
       - path: Sources/Dude/Brain/ConfirmationParser.swift
       - path: Sources/Dude/Brain/ActionParsing.swift
+      - path: Sources/Dude/Brain/AgentSpec.swift
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.jackphelps.dudeTests
