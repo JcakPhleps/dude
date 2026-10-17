@@ -4,7 +4,7 @@ import Foundation
 /// a signed DMG, so "updating" means: notice a newer release, then send the user
 /// to download it. No background installer — just a nudge and a download link.
 enum UpdateChecker {
-    static let repo = "magwann/dude"
+    static let repo = "JcakPhleps/dude"
 
     struct Release: Sendable {
         let version: String        // normalized tag, e.g. "1.1"

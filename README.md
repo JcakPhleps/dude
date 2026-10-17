@@ -7,11 +7,11 @@
 **A screen-aware desktop buddy for macOS — a little pixel guy who sees your
 screen, answers in context, and actually *does* things.**
 
-[![Download for macOS](https://img.shields.io/github/v/release/magwann/dude?label=Download%20for%20macOS&logo=apple&color=2ea44f)](https://github.com/magwann/dude/releases/latest)
+[![Download for macOS](https://img.shields.io/github/v/release/JcakPhleps/dude?label=Download%20for%20macOS&logo=apple&color=2ea44f)](https://github.com/JcakPhleps/dude/releases/latest)
 &nbsp;
 ![Platform](https://img.shields.io/badge/macOS-14%2B-lightgrey?logo=apple)
 
-### [⬇︎ Download the latest release](https://github.com/magwann/dude/releases/latest)
+### [⬇︎ Download the latest release](https://github.com/JcakPhleps/dude/releases/latest)
 
 </div>
 
@@ -52,7 +52,7 @@ Think LittleBird — but with a little guy who actually walks around your deskto
 dude is **self-signed** (no paid Apple Developer account yet), so macOS Gatekeeper
 will block it the first time. This is expected — here's the one-time dance:
 
-1. Download **`Dude.dmg`** from the [**latest release**](https://github.com/magwann/dude/releases/latest)
+1. Download **`Dude.dmg`** from the [**latest release**](https://github.com/JcakPhleps/dude/releases/latest)
    and open it.
 2. **Drag `dude` into Applications** (do this *before* first launch — it avoids a
    macOS quirk that can make permissions act up).
@@ -112,7 +112,7 @@ sources are never touched by the background observer.
 Requires [XcodeGen](https://github.com/yonaskolb/XcodeGen) and Xcode 16+.
 
 ```sh
-git clone https://github.com/magwann/dude.git
+git clone https://github.com/JcakPhleps/dude.git
 cd dude
 xcodegen generate
 open Dude.xcodeproj          # ⌘R to run, or:

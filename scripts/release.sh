@@ -152,4 +152,4 @@ gh release create "$TAG" "$ROOT/Dude.dmg" \
 step "Done"
 echo "  Released $TAG"
 echo "  $(gh release view "$TAG" --json url --jq .url)"
-echo "  Download: https://github.com/magwann/dude/releases/latest"
+echo "  Download: https://github.com/JcakPhleps/dude/releases/latest"
